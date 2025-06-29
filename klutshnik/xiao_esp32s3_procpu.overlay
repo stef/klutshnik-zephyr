@@ -1,0 +1,34 @@
+/delete-node/ &storage_partition;
+
+/ {
+ fstab {
+     compatible = "zephyr,fstab";
+     lfs1: lfs1 {
+         compatible = "zephyr,fstab,littlefs";
+         mount-point = "/lfs";
+         partition = <&lfs1_partition>;
+         automount;
+         read-size = <16>;
+         prog-size = <16>;
+         cache-size = <256>;
+         lookahead-size = <32>;
+         block-cycles = <512>;
+     };
+ };
+};
+
+/* 4MB flash */
+&flash0 {
+   reg = <0x0 DT_SIZE_M(8)>;
+   partitions {
+      compatible = "fixed-partitions";
+      #address-cells = <1>;
+      #size-cells = <1>;
+
+      /* Use second half of flash for the filesystem. */
+      lfs1_partition: partition@400000 {
+         label = "storage";
+         reg = <0x400000 DT_SIZE_M(4)>;
+      };
+   };
+};

@@ -1,0 +1,73 @@
+# Copyright (c) 2021 Nordic Semiconductor ASA
+# SPDX-License-Identifier: Apache-2.0
+
+manifest:
+  self:
+    west-commands: scripts/west-commands.yml
+
+  remotes:
+    - name: zephyrproject-rtos
+      url-base: https://github.com/zephyrproject-rtos
+    - name: stef
+      url-base: https://github.com/stef
+
+  defaults:
+    remote: zephyrproject-rtos
+
+  projects:
+    - name: zephyr
+      remote: zephyrproject-rtos
+      revision: main
+      import:
+        # By using name-allowlist we can clone only the modules that are
+        # strictly needed by the application.
+        name-allowlist:
+          - cmsis_6    # required by the ARM port for Cortex-M
+          - hal_nordic # required by the custom_plank board (Nordic based)
+          - hal_stm32  # required by the nucleo_f302r8 board (STM32 based)
+          - hal_xtensa
+          - hal_espressif
+    - name: libsodium-zephyr
+      remote:  stef
+      repo-path: libsodium-zephyr
+      #submodules: true
+      path: modules/lib/libsodium
+      revision: 6751a60f4943becc066b0b2af03e26bd592e691a
+      groups:
+        - libsodium
+    - name: liboprf
+      remote:  stef
+      repo-path: liboprf
+      #submodules: true
+      path: modules/lib/liboprf
+      revision: 8eaaf3c81076aef6d388fa77c5833fe8852840b7
+      groups:
+        - liboprf
+    - name: mbedtls
+      revision: 5f889934359deccf421554c7045a8381ef75298f
+      path: modules/crypto/mbedtls
+      groups:
+        - crypto
+    - name: mcuboot
+      revision: 990b1fcb367e27056b282f183e819964fdbfe907
+      path: bootloader/mcuboot
+      groups:
+        - bootloader
+    - name: net-tools
+      revision: 986bfeb040df3d9029366de8aea4ce1f84e93780
+      path: tools/net-tools
+      groups:
+        - tools
+    - name: picolibc
+      path: modules/lib/picolibc
+      revision: 82d62ed1ac55b4e34a12d0390aced2dc9af13fc9
+    - name: tinycrypt
+      revision: 1012a3ebee18c15ede5efc8332ee2fc37817670f
+      path: modules/crypto/tinycrypt
+      groups:
+        - crypto
+    - name: littlefs
+      path: modules/fs/littlefs
+      groups:
+        - fs
+      revision: ed0531d59ee37f5fb2762bcf2fc8ba4efaf82656
