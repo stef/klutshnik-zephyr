@@ -17,7 +17,7 @@ Dependencies:
  - west
  - `xtensa-esp32s3-elf` cross-compiler toolchain.
 
-'''sh
+```sh
 git clone https://github.com/stef/klutshnik-zephyr
 west init -m ./klutshnik-zephyr workspace
 cd workspace
