@@ -1742,6 +1742,7 @@ static int getcfg(CFG *cfg) {
   //printb64("ltsig sk",crypto_sign_SECRETKEYBYTES,cfg->ltsig_sk);
   printb64("ltsig pk",32,cfg->ltsig_pk);
   if(0!=loadcfg("/lfs/cfg/record_salt", 32, cfg->rec_salt)) return -1;
+  log_flush();
   return 0;
 }
 
@@ -1762,6 +1763,13 @@ int main(void) {
   }
 
   start_adv();
+
+  char addr_s[BT_ADDR_LE_STR_LEN];
+  bt_addr_le_t addr = {0};
+  size_t count = 1;
+  bt_id_get(&addr, &count);
+  bt_addr_le_to_str(&addr, addr_s, sizeof(addr_s));
+  LOG_INF("MAC address: %s", addr_s);
 
   //err = fs_mount(mountpoint);
   //if (err < 0 && err != -EBUSY) {
