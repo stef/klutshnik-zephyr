@@ -1765,7 +1765,7 @@ int main(void) {
     return err;
   }
   LOG_INF("%s: bsize = %lu ; frsize = %lu ;"
-          " blocks = %lu ; bfree = %lu\n",
+          " blocks = %lu ; bfree = %lu",
           mountpoint->mnt_point,
           sbuf.f_bsize, sbuf.f_frsize,
           sbuf.f_blocks, sbuf.f_bfree);
