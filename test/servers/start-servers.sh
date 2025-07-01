@@ -1,6 +1,6 @@
 #!/bin/sh -x
 
-ORACLE=${ORACLE:-../../../server/zig-out/bin/klutshnikd}
+ORACLE=${ORACLE:-../../../../../server/zig-out/bin/klutshnikd}
 PIDS=""
 
 cleanup() {
