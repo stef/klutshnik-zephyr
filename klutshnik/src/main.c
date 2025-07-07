@@ -250,6 +250,7 @@ BT_CONN_CB_DEFINE(conn_callbacks) = {
 };
 
 static int nus_send(const uint8_t *msg, const size_t len) {
+  //LOG_DBG("nus_send: %d", len);
   for(size_t ptr = 0;ptr<len;ptr+=20) {
     int err=0;
     const int psize=((len-ptr)>20)?20:(len-ptr);
@@ -258,10 +259,12 @@ static int nus_send(const uint8_t *msg, const size_t len) {
     } while (err == -EAGAIN);
     if(err<0) return err;
   }
+  //LOG_DBG("nus_send: done", len);
   return 0;
 }
 
 static int send(const uint8_t *msg, const size_t msg_len) {
+  //LOG_DBG("send: %d", msg_len);
   Noise_XK_encap_message_t *encap_msg=NULL;
 
   encap_msg = Noise_XK_pack_message_with_conf_level(NOISE_XK_CONF_STRONG_FORWARD_SECRECY, msg_len, (uint8_t*) msg);
@@ -294,6 +297,7 @@ static int send(const uint8_t *msg, const size_t msg_len) {
     sys_reboot(SYS_REBOOT_COLD);
   }
 
+  //LOG_DBG("sent", msg_len);
   return err;
 }
 
@@ -321,6 +325,7 @@ static int send_pkt(const uint8_t *msg, const size_t msg_len) {
 }
 
 int read(size_t size, uint8_t **buf) {
+  //LOG_DBG("read: %d", size);
   int64_t timeout = 3;
   int64_t start = k_uptime_get();
   size_t plen = 0;
@@ -349,6 +354,8 @@ int read(size_t size, uint8_t **buf) {
     k_sleep(K_MSEC(10));
   }
 
+  //LOG_DBG("read: done");
+
   Noise_XK_encap_message_t *encap_msg;
   Noise_XK_rcode res;
   uint32_t plain_msg_len;
@@ -375,6 +382,7 @@ int read(size_t size, uint8_t **buf) {
     inbuf_end=0;
   } else if(inbuf_start > inbuf_end) return -EINVAL;
 
+  //LOG_DBG("decrypted");
   return plain_msg_len;
 }
 
@@ -1909,7 +1917,7 @@ static int uart_recv_cfg(CFG *cfg) {
    }
 
    uint8_t *key = pkt+65;
-   for(int i=0;i<auth_key_len;i++,key+64) {
+   for(int i=0;i<auth_key_len;i++,key+=64) {
      if(memcmp(pkt,key,64)==0) continue;
      LOG_HEXDUMP_INF(key, 64, "saving authorized_key");
      ret = save("/lfs/cfg/authorized_keys", 64, key, FS_O_APPEND);
@@ -1919,7 +1927,6 @@ static int uart_recv_cfg(CFG *cfg) {
        log_flush();
        sys_reboot(SYS_REBOOT_COLD);
      }
-     key+=64;
    }
    LOG_DBG("Saved cfg");
 
