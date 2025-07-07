@@ -1,7 +1,6 @@
 /*
- * Copyright (c) 2020 stf
- *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: 2025, Marsiske Stefan
+ * SPDX-License-Identifier: LGPL-3.0-or-later
  */
 
 #include <zephyr/kernel.h>
@@ -22,6 +21,7 @@
 #include <zephyr/net/net_ip.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/logging/log_ctrl.h>
+#include <zephyr/drivers/uart.h>
 
 #include <sodium.h>
 #include <string.h>
@@ -46,6 +46,8 @@ LOG_MODULE_REGISTER(klutshnik, CONFIG_KLUTSHNIK_LOG_LEVEL);
 #define MKFS_DEV_ID FIXED_PARTITION_ID(lfs1_partition)
 #define MKFS_FLAGS 0
 
+#define UART_DEVICE_NODE DT_NODELABEL(usb_serial)
+
 #if DT_NODE_EXISTS(PARTITION_NODE)
 FS_FSTAB_DECLARE_ENTRY(PARTITION_NODE);
 #else /* PARTITION_NODE */
@@ -66,22 +68,23 @@ static struct fs_mount_t lfs_storage_mnt = {
 #endif
       ;
 
-// todo use cfg
-static const uint8_t server_sk[] = { 0xc3, 0xda, 0x55, 0x37, 0x9d, 0xe9, 0xc6, 0x90, 0x8e, 0x94, 0xea, 0x4d, 0xf2, 0x8d, 0x08, 0x4f, 0x32, 0xec, 0xcf, 0x03, 0x49, 0x1c, 0x71, 0xf7, 0x54, 0xb4, 0x07, 0x55, 0x77, 0xa2, 0x85, 0x52 };
-static const uint8_t client_pk[] = { 0xc0, 0xb8, 0xc7, 0x27, 0xa9, 0xe3, 0x64, 0x8a, 0x5a, 0x02, 0xec, 0x50, 0xda, 0x62, 0xb5, 0x3a, 0x32, 0xe1, 0x62, 0x41, 0xee, 0xd0, 0x61, 0xa3, 0x9b, 0xf1, 0xc5, 0x7d, 0x28, 0xb9, 0x8b, 0x23 };
+#if DT_NODE_EXISTS(UART_DEVICE_NODE)
+static const struct device *const uart_dev = DEVICE_DT_GET(UART_DEVICE_NODE);
 
-typedef struct {
-  uint8_t keyid[32];
-  uint8_t ltsig[32];
-  uint8_t noise[32];
-} AuthKeys;
+//#define UART_MSG_SIZE 37
+///* queue to store up to 10 messages (aligned to 4-byte boundary) */
+//K_MSGQ_DEFINE(uart_msgq, UART_MSG_SIZE, 1, 4);
+//
+///* receive buffer used in UART ISR callback */
+//static char uart_rx_buf[UART_MSG_SIZE];
+//static int uart_rx_buf_pos;
+#endif
 
 typedef enum {
   DISCONNECTED,
   CONNECTED,
   //SECURE
-} ConnectionState;
-
+} KlutshnikState;
 
 typedef enum {
     /// KMS ops
@@ -147,14 +150,26 @@ typedef struct {
   uint8_t readonly;
 } __attribute__((__packed__)) ModAuthReq;
 
-static int trace = 1;
-static volatile uint8_t inbuf[1024*32];
-static volatile int inbuf_end=0;
+typedef struct {
+  uint8_t keyid[32];
+  uint8_t ltsig[32];
+  uint8_t noise[32];
+} __attribute__((__packed__)) AuthKeys;
+
+typedef struct {
+  uint8_t noise_sk[32];
+  uint8_t ltsig_sk[crypto_sign_SECRETKEYBYTES];
+  uint8_t rec_salt[32];
+} CFG;
+
+static uint8_t inbuf[1024*32];
+static int inbuf_end=0;
 static int inbuf_start=0;
-static volatile ConnectionState cstate=DISCONNECTED;
-static volatile struct bt_conn *c=NULL;
+static KlutshnikState kstate=DISCONNECTED;
+static struct bt_conn *bt_c=NULL;
 static Noise_XK_session_t *session=NULL;
 static Noise_XK_device_t *dev=NULL;
+static uint64_t ref_time;
 
 static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
@@ -170,21 +185,8 @@ static void notif_enabled(bool enabled, void *ctx) {
 	LOG_INF("%s() - %s", __func__, (enabled ? "Enabled" : "Disabled"));
 }
 
-typedef struct {
-  uint8_t noise_sk[32];
-  uint8_t noise_pk[32];
-  uint8_t ltsig_sk[crypto_sign_SECRETKEYBYTES];
-  uint8_t ltsig_pk[crypto_sign_PUBLICKEYBYTES];
-  uint8_t rec_salt[32];
-} CFG;
-
-// todo use config
-#include "authorized_keys.c"
-
-static uint64_t ref_time;
 uint64_t ztime(void) {
   uint64_t now = k_uptime_seconds();
-  //if(trace) printk("ztime: now = %lld, ztime = %lld\n", now, now + ref_time);
   return htonll(now + ref_time);
 }
 
@@ -192,17 +194,10 @@ static void received(struct bt_conn *conn, const void *data, uint16_t len, void 
 	ARG_UNUSED(conn);
 	ARG_UNUSED(ctx);
 
-   if(cstate!=CONNECTED) {
+   if(kstate!=CONNECTED) {
      LOG_ERR("received %d bytes, but we are in disconnected state", len);
      return;
    }
-
-   //if(trace) {
-   //  uint8_t hex[MTU*2+1];
-   //  hex[sizeof(hex)-1]=0;
-   //  bin2hex(data,len,hex,sizeof(hex));
-   //  printk("%s() - Len: %d, Message: %s\n", __func__, len, hex);
-   //}
    if(len + inbuf_end<sizeof(inbuf)) {
       memcpy(inbuf+inbuf_end, data, len);
       inbuf_end+=len;
@@ -221,8 +216,8 @@ static void connected(struct bt_conn *conn, uint8_t err) {
     const bt_addr_le_t *addr = bt_conn_get_dst (conn);
     LOG_INF("Connected to %02x-%02x-%02x-%02x-%02x-%02x",
             addr->a.val[0],addr->a.val[1],addr->a.val[2],addr->a.val[3],addr->a.val[4],addr->a.val[5]);
-    cstate = CONNECTED;
-    c = conn;
+    kstate = CONNECTED;
+    bt_c = conn;
   }
 }
 
@@ -230,8 +225,8 @@ static void disconnected(struct bt_conn *conn, uint8_t reason) {
   const bt_addr_le_t *addr = bt_conn_get_dst (conn);
   LOG_INF("Disconnected from %02x-%02x-%02x-%02x-%02x-%02x (reason 0x%02x)",
           addr->a.val[0],addr->a.val[1],addr->a.val[2],addr->a.val[3],addr->a.val[4],addr->a.val[5], reason);
-  cstate = DISCONNECTED;
-  c = NULL;
+  kstate = DISCONNECTED;
+  bt_c = NULL;
   inbuf_end=0;
   inbuf_start=0;
 }
@@ -255,17 +250,11 @@ BT_CONN_CB_DEFINE(conn_callbacks) = {
 };
 
 static int nus_send(const uint8_t *msg, const size_t len) {
-  //if(trace) {
-  //  uint8_t hex[len*2+1];
-  //  hex[sizeof(hex)-1]=0;
-  //  bin2hex(msg,len,hex,sizeof(hex));
-  //  printk("sending msg: %s\n", hex);
-  //}
   for(size_t ptr = 0;ptr<len;ptr+=20) {
     int err=0;
     const int psize=((len-ptr)>20)?20:(len-ptr);
     do {
-      err = bt_nus_send(c, &msg[ptr], psize);
+      err = bt_nus_send(bt_c, &msg[ptr], psize);
     } while (err == -EAGAIN);
     if(err<0) return err;
   }
@@ -332,15 +321,12 @@ static int send_pkt(const uint8_t *msg, const size_t msg_len) {
 }
 
 int read(size_t size, uint8_t **buf) {
-  //if(trace) printk("reading %d\n", size);
   int64_t timeout = 3;
   int64_t start = k_uptime_get();
   size_t plen = 0;
-  //if(trace) printk("s: %d, e: %d\n", inbuf_start, inbuf_end);
   while(1) {
-    if(cstate!=CONNECTED) return -ENOTCONN;
+    if(kstate!=CONNECTED) return -ENOTCONN;
     if (plen == 0 && inbuf_end-inbuf_start>2) {
-      //if(trace) printk("plen = ib[0]: %02x ib[1]: %02x\n", inbuf[inbuf_start], inbuf[inbuf_start+1]);
       plen = (inbuf[inbuf_start]<<8 | inbuf[inbuf_start+1]);
       if(plen >= sizeof(inbuf) - inbuf_start) return -EOVERFLOW;
     }
@@ -363,13 +349,6 @@ int read(size_t size, uint8_t **buf) {
     k_sleep(K_MSEC(10));
   }
 
-  //if(trace) {
-  //  uint8_t hex[(size+2+16)*2+1];
-  //  hex[sizeof(hex)-1]=0;
-  //  bin2hex(inbuf+inbuf_start,size+2+16,hex,(size+2+16)*2+1);
-  //  printk("rcvd: %d, %d, %s\n", size, plen, hex);
-  //}
-
   Noise_XK_encap_message_t *encap_msg;
   Noise_XK_rcode res;
   uint32_t plain_msg_len;
@@ -390,8 +369,6 @@ int read(size_t size, uint8_t **buf) {
     return -EMSGSIZE;
   }
 
-  //if(trace) printk("unwrapped message of size %d\n", plain_msg_len);
-
   inbuf_start += plen+2;
   if(inbuf_start == inbuf_end) {
     inbuf_start=0;
@@ -401,16 +378,101 @@ int read(size_t size, uint8_t **buf) {
   return plain_msg_len;
 }
 
-static int setup_noise_connection(void) {
+static int rmdir(const char *path) {
+  LOG_INF("recursively deleting %s", path);
+  struct fs_dir_t dirp;
+  fs_dir_t_init(&dirp);
+
+  struct fs_dirent dirent;
+  int ret = fs_opendir(&dirp, path);
+  if (ret) {
+    LOG_ERR("Error opening dir %s [%d]", path, ret);
+    return ret;
+  }
+
+  for (;;) {
+    /* Verify fs_readdir() */
+    ret = fs_readdir(&dirp, &dirent);
+
+    /* dirent.name[0] == 0 means end-of-dir */
+    if (ret || dirent.name[0] == 0) {
+      if (ret < 0) {
+        LOG_ERR("Error reading dir [%d]", ret);
+      }
+      break;
+    }
+
+    char fname[MAX_PATH_LEN+1];
+    snprintf(fname, sizeof(fname), "%s/%s", path, dirent.name);
+
+    if (dirent.type == FS_DIR_ENTRY_DIR) {
+      LOG_WRN("W is a dir: %s", fname);
+      rmdir(fname);
+    }
+    ret = fs_unlink(fname);
+    if(ret<0) {
+      LOG_ERR("ERROR unlinking: %s", fname);
+    }
+  }
+
+  /* Verify fs_closedir() */
+  fs_closedir(&dirp);
+
+  fs_unlink(path);
+  return 0;
+}
+
+static int load_noisekeys(const CFG *cfg, Noise_XK_device_t *dev) {
+  const char fname[]="/lfs/cfg/authorized_clients";
+  struct fs_file_t file;
+  fs_file_t_init(&file);
+  int rc = fs_open(&file, fname, FS_O_READ);
+  if (rc < 0) {
+    LOG_ERR("FAIL: open %s: %d", fname, rc);
+    return rc;
+  }
+
+  int count = 0;
+  while(1) {
+    uint8_t k[32];
+    rc = fs_read(&file, k, 32);
+    if (rc < 0) {
+      LOG_ERR("FAIL: read %s: %d", fname, rc);
+      goto out;
+    }
+    if(rc==0) {
+      rc = count;
+      goto out;
+    }
+    if(rc!=32) {
+      LOG_ERR("FAIL: short read only %dB instead of 32B", rc);
+      goto out;
+    }
+    if (!Noise_XK_device_add_peer(dev, (uint8_t*) "klutshnik client", k)) {
+      LOG_ERR("Failed to add client key to noise device");
+      rc = -1;
+      goto out;
+    }
+    count++;
+  }
+
+out:
+  int ret = fs_close(&file);
+  if (ret < 0) {
+    LOG_ERR("FAIL: close %s: %d", fname, ret);
+    return ret;
+  }
+
+  return rc;
+}
+
+static int setup_noise_connection(CFG *cfg) {
   LOG_INF("trying to establish connection");
   const uint8_t dst[]="klutshnik ble tle";
   const uint8_t noise_name[]="klutshnik server 1";
   const uint8_t srlz_key[AEAD_KEY_SIZE] = {0};
-  dev = Noise_XK_device_create(sizeof(dst)-1, dst, noise_name, srlz_key, server_sk);
-  if (!Noise_XK_device_add_peer(dev, (uint8_t*) "klutshnik client 1", client_pk)) {
-     LOG_ERR("Failed to add client key to noise device");
-     return -1;
-  }
+  dev = Noise_XK_device_create(sizeof(dst)-1, dst, noise_name, srlz_key, cfg->noise_sk);
+  load_noisekeys(cfg,dev);
   session = Noise_XK_session_create_responder(dev);
   if(!session) {
      LOG_ERR("Failed to create noise session");
@@ -418,20 +480,24 @@ static int setup_noise_connection(void) {
      return -1;
   }
 
-  while(cstate!=CONNECTED);
-  while(cstate==CONNECTED && inbuf_end!=48) k_sleep(K_MSEC(10));
-  if(cstate!=CONNECTED) {
+  while(kstate!=CONNECTED) {
+    // todo refactor this
+    //if(uc=='r') {
+    //  LOG_INF("resetting /data");
+    //  log_flush();
+    //  rmdir("/lfs/data");
+    //  fs_mkdir("/lfs/data");
+    //  uc=0;
+    //}
+    k_sleep(K_MSEC(10));
+  };
+  while(kstate==CONNECTED && inbuf_end!=48) k_sleep(K_MSEC(10));
+  if(kstate!=CONNECTED) {
     Noise_XK_session_free(session);
     Noise_XK_device_free(dev);
     return ENOTCONN;
   }
 
-  //if(trace) {
-  //  uint8_t hex[48*2+1];
-  //  hex[sizeof(hex)-1]=0;
-  //  bin2hex(inbuf,48,hex,48*2+1);
-  //  printk("msg1: %s\n", hex);
-  //}
   inbuf_end=0;
 
   Noise_XK_encap_message_t *encap_msg;
@@ -475,24 +541,16 @@ static int setup_noise_connection(void) {
     Noise_XK_device_free(dev);
     return err;
   } else if (err < 0) {
-    // fails in subsys/bluetooth/host/gatt.c:2550 calling bt_att_create_pdu(conn, BT_ATT_OP_NOTIFY, sizeof(*nfy) + params->len);
-    // which is in subsys/bluetooth/host/att.c:3043
     LOG_ERR("error sending handshake: %d", err);
     log_flush();
     k_sleep(K_MSEC(50));
     sys_reboot(SYS_REBOOT_COLD);
   }
 
-  while(cstate==CONNECTED && inbuf_end!=64) k_sleep(K_MSEC(10));
-  if(cstate!=CONNECTED) return ENOTCONN;
+  while(kstate==CONNECTED && inbuf_end!=64) k_sleep(K_MSEC(10));
+  if(kstate!=CONNECTED) return ENOTCONN;
   inbuf_end=0;
 
-  //if(trace) {
-  //  uint8_t hex[64*2+1];
-  //  hex[sizeof(hex)-1]=0;
-  //  bin2hex(inbuf,64,hex,sizeof(hex));
-  //  printk("msg2: %s\n", hex);
-  //}
   res = Noise_XK_session_read(&encap_msg, session, 64, inbuf);
   if(!Noise_XK_rcode_is_success(res)) {
     LOG_ERR("failed to noise read the handshake final msg");
@@ -533,7 +591,7 @@ static void reset_ble(void) {
   }
   inbuf_end=0;
   inbuf_start=0;
-  cstate=DISCONNECTED;
+  kstate=DISCONNECTED;
   // start again
   err = bt_enable(NULL);
   if (err) {
@@ -648,7 +706,6 @@ static int getfield(const CFG *cfg, const uint8_t recid[crypto_generichash_BYTES
     return rc;
   }
   if(rc<data_len) {
-    //printk("E error short read, only %d instead of requested %d bytes read from %s\n", rc, data_len, fname);
     LOG_ERR("E error short read, only %d instead of requested %d bytes read from %s", rc, data_len, fname);
     return -ENODATA;
   }
@@ -661,7 +718,7 @@ static int getfield(const CFG *cfg, const uint8_t recid[crypto_generichash_BYTES
   return (rc < 0 ? rc : 0);
 }
 
-static int getperm(CFG *cfg,
+static int getperm(const CFG *cfg,
                    const uint8_t recid[crypto_generichash_BYTES],
                    const uint8_t pk[crypto_sign_PUBLICKEYBYTES],
                    const uint8_t owner[crypto_sign_PUBLICKEYBYTES]) {
@@ -814,7 +871,7 @@ static int auth(const CFG *cfg, const KlutshnikOp op, uint8_t pk[crypto_sign_PUB
 int toprf_update(const CFG *cfg, const UpdateReq *req) {
   int ret=0;
 
-  if(0!=auth(cfg, OP_UPDATE, req->pk, sizeof(UpdateReq), (uint8_t*) req)) {
+  if(0!=auth(cfg, OP_UPDATE, (uint8_t *) req->pk, sizeof(UpdateReq), (uint8_t*) req)) {
     LOG_ERR("failed to authenticate");
     zfail();
   }
@@ -934,7 +991,6 @@ int toprf_update(const CFG *cfg, const UpdateReq *req) {
 
   LOG_INF(" done");
 
-  // in a real deployment peers do not share the same pks buffers
   if(0!=toprf_update_peer_set_bufs(&ctx, self, n, t, k0_share,
                                    &k0_commitments,
                                    &lt_pks, &peers_noise_pks,
@@ -992,13 +1048,6 @@ int toprf_update(const CFG *cfg, const UpdateReq *req) {
       zfail();
     }
     if(peer_out_size>0) {
-      //if(trace) {
-      //  uint8_t hex[peer_out_size*2+1];
-      //  hex[sizeof(hex)-1]=0;
-      //  bin2hex(peers_out_buf,peer_out_size,hex,sizeof(hex));
-      //  printk("peers_out_buf %s\n", hex);
-      //}
-      //printk("send: ");
       ret = send_pkt(peers_out_buf, peer_out_size);
       if(ret < 0) {
         LOG_ERR("failed to send message for step %d", curstep);
@@ -1050,33 +1099,74 @@ int toprf_update(const CFG *cfg, const UpdateReq *req) {
   return ret;
 }
 
-//typedef struct {
-//  size_t len;
-//  uint8_t (*sig_pks)[][crypto_sign_PUBLICKEYBYTES];
-//  uint8_t (*noise_pks)[][crypto_scalarmult_BYTES];
-//} Keyloader_CB_Arg;
+typedef struct {
+  size_t len;
+  AuthKeys *auth_keys;
+} Keyloader_CB_Arg;
+
+static int load_authkeys(Keyloader_CB_Arg *cb_arg) {
+  struct fs_dirent dirent;
+  const char fname[]="/lfs/cfg/authorized_keys";
+  int rc = fs_stat(fname, &dirent);
+  if (rc < 0) {
+    if(rc == -ENOENT) return 0;
+    LOG_ERR("FAIL: stat %s: %d", fname, rc);
+    return rc;
+  } else {
+    if(dirent.type != FS_DIR_ENTRY_FILE) {
+      LOG_ERR("E error %s is not a file", fname);
+      return -EISDIR;
+    }
+  }
+  if(dirent.size == 0) return -ENODATA;
+  if(dirent.size % 64 != 0) return -EINVAL;
+  cb_arg->len = dirent.size / 64;
+  cb_arg->auth_keys = k_malloc(sizeof(AuthKeys) * cb_arg->len);
+
+  struct fs_file_t file;
+  fs_file_t_init(&file);
+  rc = fs_open(&file, fname, FS_O_READ);
+  if (rc < 0) {
+    LOG_ERR("FAIL: open %s: %d", fname, rc);
+    return rc;
+  }
+
+  for(int i=0;i<cb_arg->len;i++) {
+    rc = fs_read(&file, cb_arg->auth_keys[i].ltsig, 64);
+    if (rc < 0) {
+      LOG_ERR("FAIL: read %s: %d", fname, rc);
+      goto out;
+    }
+    if(rc!=64) {
+      LOG_ERR("FAIL: short read only %dB instead of 64B", rc);
+      return -EINVAL;
+    }
+    crypto_generichash(cb_arg->auth_keys[i].keyid,32,cb_arg->auth_keys[i].ltsig,crypto_sign_PUBLICKEYBYTES,NULL,0);
+  }
+
+out:
+  int ret = fs_close(&file);
+  if (ret < 0) {
+    LOG_ERR("FAIL: close %s: %d", fname, ret);
+    return ret;
+  }
+
+  return (rc < 0 ? rc : 0);
+}
 
 int keyloader_cb(const uint8_t id[crypto_generichash_BYTES], void *arg, uint8_t sigpk[crypto_sign_PUBLICKEYBYTES], uint8_t noise_pk[crypto_scalarmult_BYTES]) {
-  //Keyloader_CB_Arg *args = (Keyloader_CB_Arg *) arg;
-  //uint8_t pkhash[crypto_generichash_BYTES];
-  //dump(id, crypto_generichash_BYTES, "loading keys for keyid");
-  for(unsigned i=0;i<6 /*todo get from config*/;i++) {
-    //crypto_generichash(pkhash,sizeof pkhash,(*args->sig_pks)[i+1],crypto_sign_PUBLICKEYBYTES,NULL,0);
-    //if(memcmp(pkhash, id, sizeof pkhash) == 0) {
-    if(memcmp(authkeys[i].keyid, id, crypto_generichash_BYTES) == 0) {
-      //memcpy(sigpk, (*args->sig_pks)[i+1], crypto_sign_PUBLICKEYBYTES);
-      //memcpy(noise_pk, (*args->noise_pks)[i], crypto_scalarmult_BYTES);
-      memcpy(sigpk, authkeys[i].ltsig, crypto_sign_PUBLICKEYBYTES);
-      memcpy(noise_pk, authkeys[i].noise, crypto_scalarmult_BYTES);
+  Keyloader_CB_Arg *args = (Keyloader_CB_Arg *) arg;
+  for(unsigned i=0;i<args->len;i++) {
+    if(memcmp(args->auth_keys[i].keyid, id, crypto_generichash_BYTES) == 0) {
+      memcpy(sigpk, args->auth_keys[i].ltsig, crypto_sign_PUBLICKEYBYTES);
+      memcpy(noise_pk, args->auth_keys[i].noise, crypto_scalarmult_BYTES);
       return 0;
     }
   }
-  if(trace) {
-    uint8_t hex[crypto_generichash_BYTES*2+1];
-    hex[sizeof(hex)-1]=0;
-    bin2hex(id,crypto_generichash_BYTES,hex,sizeof(hex));
-    LOG_ERR("E stp-dkg: no auth key found for keyid: %s", hex);
-  }
+  uint8_t hex[crypto_generichash_BYTES*2+1];
+  hex[sizeof(hex)-1]=0;
+  bin2hex(id,crypto_generichash_BYTES,hex,sizeof(hex));
+  LOG_ERR("E stp-dkg: no auth key found for keyid: %s", hex);
   return 1;
 }
 
@@ -1097,7 +1187,6 @@ static int stp_dkg(const CFG *cfg, const CreateReq *req) {
 
   uint64_t now = k_uptime_seconds();
   ref_time = ntohll(((DKG_Message*) req->msg0)->ts) - now;
-  //if(trace) printk("setting reftime, now = %lld, ts = %lld, ref_time = %lld\n", now, ntohll(((DKG_Message*) req->msg0)->ts), ref_time);
 
   const uint8_t n=ctx.n;
   const uint8_t t=ctx.t;
@@ -1132,11 +1221,14 @@ static int stp_dkg(const CFG *cfg, const CreateReq *req) {
   memset(peer_last_ts, 0, sizeof peer_last_ts);
   STP_DKG_Cheater peer_cheaters[t*t - 1];
   memset(peer_cheaters,0,sizeof(peer_cheaters));
-  //Keyloader_CB_Arg cb_arg = {n, &lt_pks, &peers_noise_pks};
+  Keyloader_CB_Arg keyloader_args;
+  if(0!=load_authkeys(&keyloader_args)) {
+    LOG_ERR("failed to load authorized_keys. aborting.");
+    return -1;
+  }
 
-  // in a real deployment peers do not share the same pks buffers
   if(0!=stp_dkg_peer_set_bufs(&ctx, &peerids,
-                              &keyloader_cb, NULL, //&cb_arg,
+                              &keyloader_cb, &keyloader_args,
                               &lt_pks,
                               &peers_noise_pks,
                               &noise_outs, &noise_ins,
@@ -1163,7 +1255,6 @@ static int stp_dkg(const CFG *cfg, const CreateReq *req) {
     if(peer_out_size==0) peers_out = NULL;
     else peers_out = peers_out_buf;
 
-    // 0sized vla meh for the last time..
     const size_t peer_in_size = stp_dkg_peer_input_size(&ctx);
     uint8_t *peer_in = NULL;
 
@@ -1258,7 +1349,6 @@ static int stp_dkg(const CFG *cfg, const CreateReq *req) {
     zfail();
   }
   LOG_INF("verifying auth_buf");
-  // todo authbuf has probably len prefixed, as it is send_pkt-ed..
   if(0!=crypto_sign_verify_detached(auth_buf + 2, auth_buf + 2 + crypto_sign_BYTES,ret - 2 - crypto_sign_BYTES,stp_ltpk)) {
     LOG_ERR("E auth data not signed by owner");
     zfail();
@@ -1275,52 +1365,9 @@ static int stp_dkg(const CFG *cfg, const CreateReq *req) {
   return 0;
 }
 
-static int rmdir(const char *path) {
-  LOG_INF("recursively deleting %s", path);
-  struct fs_dir_t dirp;
-  fs_dir_t_init(&dirp);
-
-  struct fs_dirent dirent;
-  int ret = fs_opendir(&dirp, path);
-  if (ret) {
-    LOG_ERR("Error opening dir %s [%d]", path, ret);
-    return ret;
-  }
-
-  for (;;) {
-    /* Verify fs_readdir() */
-    ret = fs_readdir(&dirp, &dirent);
-
-    /* dirent.name[0] == 0 means end-of-dir */
-    if (ret || dirent.name[0] == 0) {
-      if (ret < 0) {
-        LOG_ERR("Error reading dir [%d]", ret);
-      }
-      break;
-    }
-
-    char fname[MAX_PATH_LEN];
-    snprintf(fname, sizeof(fname), "%s/%s", path, dirent.name);
-
-    if (dirent.type == FS_DIR_ENTRY_DIR) {
-      LOG_WRN("W is a dir: %s", fname);
-    }
-    ret = fs_unlink(fname);
-    if(ret<0) {
-      LOG_ERR("ERROR unlinking: %s", fname);
-    }
-  }
-
-  /* Verify fs_closedir() */
-  fs_closedir(&dirp);
-
-  fs_unlink(path);
-  return 0;
-}
-
 static int decrypt(const CFG *cfg, const DecryptReq *req) {
-  int rc, ret;
-  if(0!=auth(cfg, OP_DECRYPT, req->pk, sizeof(DecryptReq), (uint8_t*) req)) {
+  int ret;
+  if(0!=auth(cfg, OP_DECRYPT, (uint8_t*) req->pk, sizeof(DecryptReq), (uint8_t*) req)) {
     LOG_ERR("failed to authenticate");
     zfail();
   }
@@ -1358,7 +1405,7 @@ static int decrypt(const CFG *cfg, const DecryptReq *req) {
 static int modauth(const CFG *cfg, const ModAuthReq *req) {
   int rc, ret;
   uint8_t pk[crypto_sign_PUBLICKEYBYTES];
-  if(0!=auth(cfg, OP_MODAUTH, pk, sizeof(ModAuthReq), (uint8_t*) req)) {
+  if(0!=auth(cfg, OP_MODAUTH, (uint8_t*) pk, sizeof(ModAuthReq), (uint8_t*) req)) {
     LOG_ERR("failed to authenticate");
     zfail();
   }
@@ -1446,8 +1493,8 @@ static int modauth(const CFG *cfg, const ModAuthReq *req) {
 }
 
 static int refresh(const CFG *cfg, const RefreshReq *req) {
-  int rc, ret;
-  if(0!=auth(cfg, OP_REFRESH, req->pk, sizeof(RefreshReq), (uint8_t*) req)) {
+  int ret;
+  if(0!=auth(cfg, OP_REFRESH, (uint8_t*) req->pk, sizeof(RefreshReq), (uint8_t*) req)) {
     LOG_ERR("failed to authenticate");
     zfail();
   }
@@ -1490,7 +1537,7 @@ static int refresh(const CFG *cfg, const RefreshReq *req) {
 
 static int delete(const CFG *cfg, const DeleteReq *req) {
   int rc, ret;
-  if(0!=auth(cfg, OP_DELETE, req->pk, sizeof(DeleteReq), (uint8_t*) req)) {
+  if(0!=auth(cfg, OP_DELETE, (uint8_t*) req->pk, sizeof(DeleteReq), (uint8_t*) req)) {
     LOG_ERR("failed to authenticate");
     zfail();
   }
@@ -1551,6 +1598,30 @@ static int delete(const CFG *cfg, const DeleteReq *req) {
   return 0;
 }
 
+static int save(const char *path, const size_t key_len, uint8_t *key, const int open_flags) {
+  struct fs_file_t file;
+  int rc, ret;
+  fs_file_t_init(&file);
+  rc = fs_open(&file, path, FS_O_CREATE | FS_O_WRITE | open_flags);
+  if (rc < 0) {
+    LOG_ERR("FAIL: open %s: %d", path, rc);
+    return rc;
+  }
+
+  rc = fs_write(&file, key, key_len);
+  if (rc < 0) {
+    LOG_ERR("FAIL: write %s: %d", path, rc);
+    goto out;
+  }
+out:
+  ret = fs_close(&file);
+  if (ret < 0) {
+    LOG_ERR("FAIL: close %s: %d", path, ret);
+    return ret;
+  }
+  return (rc < 0 ? rc : 0);
+}
+
 static int initkey(const char *path, const size_t key_len, uint8_t *key) {
   struct fs_dirent entry;
   if(0 == fs_stat(path, &entry)) {
@@ -1571,58 +1642,44 @@ static int initkey(const char *path, const size_t key_len, uint8_t *key) {
   entropy_get_entropy(rng_dev, (char *)key, key_len);
   crypto_generichash(key,key_len, key,key_len, NULL,0);
 
-  struct fs_file_t file;
-  int rc, ret;
-  fs_file_t_init(&file);
-  rc = fs_open(&file, path, FS_O_CREATE | FS_O_WRITE);
-  if (rc < 0) {
-    LOG_ERR("FAIL: open %s: %d", path, rc);
-    return rc;
-  }
-
-  rc = fs_write(&file, key, key_len);
-  if (rc < 0) {
-    LOG_ERR("FAIL: write %s: %d", path, rc);
-    goto out;
-  }
-out:
-  ret = fs_close(&file);
-  if (ret < 0) {
-    LOG_ERR("FAIL: close %s: %d", path, ret);
-    return ret;
-  }
-  return (rc < 0 ? rc : 0);
+  return save(path,key_len,key,0);
 }
 
 static int initcfg(CFG *cfg) {
-  fs_mkdir("/lfs/cfg");
-
   int rc;
   rc = initkey("/lfs/cfg/noise_key", 32, cfg->noise_sk);
   if(rc!=0) {
     LOG_ERR("E failed to init noise_sk");
     return rc;
   }
-  Noise_XK_dh_secret_to_public(cfg->noise_pk, cfg->noise_sk);
 
-  uint8_t noise_seed[crypto_sign_SEEDBYTES];
-  rc = initkey("/lfs/cfg/ltsig_seed", crypto_sign_SEEDBYTES, noise_seed);
+  uint8_t ltsig_seed[crypto_sign_SEEDBYTES];
+  rc = initkey("/lfs/cfg/ltsig_seed", crypto_sign_SEEDBYTES, ltsig_seed);
   if(rc!=0) {
     LOG_ERR("E failed to init ltsig_seed");
     return rc;
   }
-  if(0!=crypto_sign_seed_keypair(cfg->ltsig_pk, cfg->ltsig_sk, noise_seed)) {
+  uint8_t dummy[crypto_sign_PUBLICKEYBYTES];
+  if(0!=crypto_sign_seed_keypair(dummy, cfg->ltsig_sk, ltsig_seed)) {
     LOG_ERR("E failed to derive ltsig keypair");
     return -1;
   }
-  sodium_memzero(noise_seed,sizeof noise_seed);
+  sodium_memzero(ltsig_seed,sizeof ltsig_seed);
+
+  uint8_t authkey_pk[64];
+  crypto_sign_ed25519_sk_to_pk(authkey_pk, cfg->ltsig_sk);
+  Noise_XK_dh_secret_to_public(authkey_pk+32, cfg->noise_sk);
+  rc = save("/lfs/cfg/authorized_keys", 64, authkey_pk, FS_O_APPEND);
+  if(0!=rc) {
+    LOG_ERR("failed to save authorized keys of device: %d. aborting.", rc);
+    return rc;
+  }
 
   rc = initkey("/lfs/cfg/record_salt", 32, cfg->rec_salt);
   if(rc!=0) {
     LOG_ERR("E failed to init record salt");
     return rc;
   }
-
   return 0;
 }
 
@@ -1675,93 +1732,209 @@ static int loadcfg(const char* path, const size_t buf_len, uint8_t *buf) {
   return 0;
 }
 
-static int getcfg(CFG *cfg) {
-  //fs_unlink("/lfs/cfg/noise_key");
-  //fs_unlink("/lfs/cfg/ltsig_key");
-  //fs_unlink("/lfs/cfg/rec_salt");
-  struct fs_dirent entry;
-  if(-ENOENT == fs_stat("/lfs/cfg", &entry)) {
-    LOG_WRN("W /lfs/cfg doesn't exist, initializing");
-    fs_mkdir("/lfs/cfg");
-    if(0!=initcfg(cfg)) return -1;
-    printb64("noise pk",32,cfg->noise_pk);
-    printb64("ltsig pk",32,cfg->ltsig_pk);
-    return 0;
-  }
+//#if DT_NODE_EXISTS(UART_DEVICE_NODE)
+//void serial_cb(const struct device *dev, void *cfg_p) {
+//	uint8_t c;
+//	if (!uart_irq_update(uart_dev)) {
+//		return;
+//	}
+//
+//	if (!uart_irq_rx_ready(uart_dev)) {
+//		return;
+//	}
+//
+//   CFG *cfg = cfg_p;
+//	/* read until FIFO empty */
+//   const uint8_t preamble[]="KLUTSHNIK-DEVICE-INIT";
+//   static int p_idx=0;
+//   static int stage=0;
+//	while (uart_fifo_read(uart_dev, &c, 1) == 1) {
+//     if(stage==0) {
+//       if(p_idx==sizeof(preamble)) stage==1;
+//       else if(c==preamble[p_idx]) p_idx++;
+//       else if(p_idx>0) p_idx=0;
+//       continue;
+//     }
+//     //if(c=='r') uc = 'r';
+//     //if(uc=='I' && c=='i') {
+//     //  for(int i=0;i<64;i++) {
+//     //    if(uart_fifo_read(uart_dev, &cfg->auth_keys[0].ltsig[i], 1) != 1) {
+//     //      LOG_ERR("failed to read auth_key from uart, at pos: %d", i);
+//     //      return;
+//     //    }
+//     //  }
+//     //  uc='i';
+//     //}
+//
+//     //if(c=='k') uc = 'k'; read 32 bytes, put them into queue
+//     //if ((c == '\n' || c == '\r') && uart_rx_buf_pos > 0) {
+//     //  /* terminate string */
+//     //  uart_rx_buf[uart_rx_buf_pos] = '\0';
+//
+//     //  /* if queue is full, message is silently dropped */
+//     //  k_msgq_put(&uart_msgq, &uart_rx_buf, K_NO_WAIT);
+//
+//     //  /* reset the buffer (it was copied to the msgq) */
+//     //  uart_rx_buf_pos = 0;
+//     //} else if (uart_rx_buf_pos < (sizeof(uart_rx_buf) - 1)) {
+//     //  uart_rx_buf[uart_rx_buf_pos++] = c;
+//     //}
+//	}
+//}
+//#endif
 
+static int getcfg(CFG *cfg) {
   if(0!=loadcfg("/lfs/cfg/noise_key", 32, cfg->noise_sk)) return -1;
-  Noise_XK_dh_secret_to_public(cfg->noise_pk, cfg->noise_sk);
-  //printb64("noise sk",32,cfg->noise_sk);
-  printb64("noise pk",32,cfg->noise_pk);
 
   uint8_t noise_seed[crypto_sign_SEEDBYTES];
   if(0!=loadcfg("/lfs/cfg/ltsig_seed", crypto_sign_SEEDBYTES, noise_seed)) {
     LOG_ERR("E failed to init ltsig_seed");
     return -1;
   }
-  if(0!=crypto_sign_seed_keypair(cfg->ltsig_pk, cfg->ltsig_sk, noise_seed)) {
+  uint8_t dummy[crypto_sign_PUBLICKEYBYTES];
+  if(0!=crypto_sign_seed_keypair(dummy, cfg->ltsig_sk, noise_seed)) {
     LOG_ERR("E failed to derive ltsig keypair");
     return -1;
   }
   sodium_memzero(noise_seed,sizeof noise_seed);
-  //printb64("ltsig sk",crypto_sign_SECRETKEYBYTES,cfg->ltsig_sk);
-  printb64("ltsig pk",32,cfg->ltsig_pk);
   if(0!=loadcfg("/lfs/cfg/record_salt", 32, cfg->rec_salt)) return -1;
-  log_flush();
+
   return 0;
 }
 
-int main(void) {
+//static int start_uart_recv(CFG *cfg) {
+//#if DT_NODE_EXISTS(UART_DEVICE_NODE)
+//  if (!device_is_ready(uart_dev)) {
+//    LOG_ERR("UART device not found!");
+//    return -1;
+//  }
+//  LOG_INF("UART device found!");
+//  err = uart_irq_callback_user_data_set(uart_dev, serial_cb, cfg);
+//  if (err < 0) {
+//    if (err == -ENOTSUP) {
+//      LOG_ERR("Interrupt-driven UART API support not enabled");
+//    } else if (err == -ENOSYS) {
+//      LOG_ERR("UART device does not support interrupt-driven API");
+//    } else {
+//      LOG_ERR("Error setting UART callback: %d", err);
+//    }
+//  } else {
+//    uart_irq_rx_enable(uart_dev);
+//  }
+//#endif
+//}
+
+static int uart_recv_cfg(CFG *cfg) {
+   printk("no configuration found. waiting for initialization");
+
+   const uint8_t preamble[]="KLUTSHNIK-DEVICE-INIT";
+   int p_idx=0, ret;
+   char c;
+
+   // read preamble
+	while(1) {
+     ret = uart_poll_in(uart_dev, &c);
+     if(ret==-1) {
+       k_sleep(K_MSEC(10));
+       continue;
+     }
+     if(ret<0) {
+       LOG_ERR("uart poll returned error: %d", ret);
+       log_flush();
+       sys_reboot(SYS_REBOOT_COLD);
+     }
+     if(c==preamble[p_idx]) p_idx++;
+     else if(p_idx>0) {
+       p_idx=0;
+       continue;
+     }
+     if(p_idx==sizeof(preamble)-1) break;
+   }
+
+   p_idx=0;
+   size_t pkt_len = 0;
+
+   // read total length
+	while(p_idx<2) {
+     ret = uart_poll_in(uart_dev, &c);
+     if(ret==-1) {
+       k_sleep(K_MSEC(10));
+       continue;
+     }
+     if(ret<0) {
+       LOG_ERR("uart poll returned error: %d", ret);
+       log_flush();
+       sys_reboot(SYS_REBOOT_COLD);
+     }
+     pkt_len = (pkt_len << 8) | c;
+     p_idx++;
+   }
+   //LOG_DBG("init pkt size: %d", pkt_len);
+   if(pkt_len<64+1+64*2) {
+     LOG_ERR("cfg packet is too small: %d", pkt_len);
+   }
+
+   uint8_t pkt[pkt_len];
+   p_idx=0;
+	while(p_idx<pkt_len) {
+     ret = uart_poll_in(uart_dev, &c);
+     if(ret==-1) {
+       k_sleep(K_MSEC(10));
+       continue;
+     }
+     if(ret<0) {
+       LOG_ERR("uart poll returned error: %d", ret);
+       log_flush();
+       sys_reboot(SYS_REBOOT_COLD);
+     }
+     pkt[p_idx++] = c;
+   }
+   int auth_key_len = pkt[64];
+   LOG_DBG("read init pkt. contains %d authorized_keys", auth_key_len);
+
+   if(auth_key_len*64+65!=pkt_len) {
+     LOG_ERR("invalid number of authorized_keys: %d, does not correspond to packet size of %d", pkt[64], pkt_len);
+     log_flush();
+     sys_reboot(SYS_REBOOT_COLD);
+   }
+
+   LOG_DBG("Saving config");
+   fs_mkdir("/lfs/cfg");
+   ret=save("/lfs/cfg/authorized_clients", 32, pkt+32, 0);
+   if(0!=ret) {
+     LOG_ERR("failed to save authorized client key of initializer: %d. aborting.", ret);
+     rmdir("/lfs/cfg");
+     log_flush();
+     sys_reboot(SYS_REBOOT_COLD);
+   }
+
+   uint8_t *key = pkt+65;
+   for(int i=0;i<auth_key_len;i++,key+64) {
+     if(memcmp(pkt,key,64)==0) continue;
+     LOG_HEXDUMP_INF(key, 64, "saving authorized_key");
+     ret = save("/lfs/cfg/authorized_keys", 64, key, FS_O_APPEND);
+     if(0!=ret) {
+       LOG_ERR("failed to save authorized client key of initializer: %d. aborting.", ret);
+       rmdir("/lfs/cfg");
+       log_flush();
+       sys_reboot(SYS_REBOOT_COLD);
+     }
+     key+=64;
+   }
+   LOG_DBG("Saved cfg");
+
+   return 0;
+}
+
+static int boot(CFG *cfg) {
   int err;
-  LOG_INF("Klutshnik BLE device");
+  LOG_INF("Klutshnik device initializing");
 
-  err = bt_nus_cb_register(&nus_listener, NULL);
-  if (err) {
-     LOG_WRN("Failed to register NUS callback: %d", err);
-     return err;
-  }
-
-  err = bt_enable(NULL);
-  if (err) {
-     LOG_WRN("Failed to enable bluetooth: %d", err);
-     return err;
-  }
-
-  start_adv();
-
-  char addr_s[BT_ADDR_LE_STR_LEN];
-  bt_addr_le_t addr = {0};
-  size_t count = 1;
-  bt_id_get(&addr, &count);
-  bt_addr_le_to_str(&addr, addr_s, sizeof(addr_s));
-  LOG_INF("MAC address: %s", addr_s);
-
-  //err = fs_mount(mountpoint);
-  //if (err < 0 && err != -EBUSY) {
-  //  printk("FAIL: mount id %" PRIuPTR " at %s: %d\n",
-  //         (uintptr_t)mountpoint->storage_dev, mountpoint->mnt_point, err);
-
-  //  err = fs_mkfs(MKFS_FS_TYPE, (uintptr_t)MKFS_DEV_ID, NULL, MKFS_FLAGS);
-  //  if (err < 0) {
-  //    printk("FAIL: lfs format: %d\n", err);
-  //    return err;
-  //  }
-
-  //  err = fs_mount(mountpoint);
-  //  if (err < 0) {
-  //    printk("FAIL: mount id %" PRIuPTR " at %s: %d\n",
-  //           (uintptr_t)mountpoint->storage_dev, mountpoint->mnt_point, err);
-  //    return err;
-  //  }
-  //}
   LOG_INF("%s mount", mountpoint->mnt_point);
-
   struct fs_statvfs sbuf;
   err = fs_statvfs(mountpoint->mnt_point, &sbuf);
   if (err < 0) {
     LOG_ERR("FAIL: statvfs: %d", err);
-    //err = fs_unmount(mountpoint);
-    //printk("%s unmount: %d\n", mountpoint->mnt_point, err);
     return err;
   }
   LOG_INF("%s: bsize = %lu ; frsize = %lu ;"
@@ -1770,18 +1943,75 @@ int main(void) {
           sbuf.f_bsize, sbuf.f_frsize,
           sbuf.f_blocks, sbuf.f_bfree);
 
-  CFG cfg;
-  getcfg(&cfg);
+  struct fs_dirent entry;
+  int rc = fs_stat("/lfs/cfg", &entry);
+  if(-ENOENT == rc) {
+    LOG_WRN("W /lfs/cfg doesn't exist, initializing");
 
-  // todo remove
-  //rmdir("/lfs/data/4af18995bd5484ae3971825aee7255e7fd72a0fc00aa20b5d6732079bcd801f9");
+    if(0!=uart_recv_cfg(cfg)) {
+      LOG_ERR("failed to receive config via UART. halting.");
+      log_flush();
+      sys_reboot(SYS_REBOOT_COLD);
+    }
+
+    if(0!=initcfg(cfg)) {
+      LOG_ERR("failed to initialize config. halting.");
+      log_flush();
+      sys_reboot(SYS_REBOOT_COLD);
+    }
+  } else if(rc==0) {
+    if(getcfg(cfg)<0) {
+      LOG_ERR("failed to load config. please fix configuration. halting.");
+      log_flush();
+      sys_reboot(SYS_REBOOT_COLD);
+    }
+  } else {
+    LOG_ERR("failed to stat /lfs/cfg: %d. halting.", rc);
+    log_flush();
+    sys_reboot(SYS_REBOOT_COLD);
+  }
+
+  uint8_t tmp[32];
+  Noise_XK_dh_secret_to_public(tmp, cfg->noise_sk);
+  printb64("noise pk",32,tmp);
+  crypto_sign_ed25519_sk_to_pk(tmp,cfg->ltsig_sk);
+  printb64("ltsig pk",32,tmp);
+
+  err = bt_enable(NULL);
+  if (err) {
+     LOG_WRN("Failed to enable bluetooth: %d", err);
+     return err;
+  }
+
+  char addr_s[BT_ADDR_LE_STR_LEN];
+  bt_addr_le_t addr = {0};
+  size_t count = 1;
+  bt_id_get(&addr, &count);
+  bt_addr_le_to_str(&addr, addr_s, sizeof(addr_s));
+  LOG_INF("MAC address: %s", addr_s);
+
+  err = bt_nus_cb_register(&nus_listener, NULL);
+  if (err) {
+     LOG_WRN("Failed to register NUS callback: %d", err);
+     return err;
+  }
+
+  start_adv();
+
+  kstate = DISCONNECTED;
 
   LOG_INF("Initialization complete");
+  return 0;
+}
+
+int main(void) {
+  CFG cfg;
+  boot(&cfg);
 
   while (true) {
-    while(cstate != CONNECTED) {
+    while(kstate != CONNECTED) {
       LOG_DBG("Waiting for noise connection");
-      if(-1==setup_noise_connection()) {
+      if(-1==setup_noise_connection(&cfg)) {
         LOG_ERR("failed to setup noise connection, resetting ble");
         reset_ble();
       }
