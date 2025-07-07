@@ -40,22 +40,24 @@ The repos ships a configured 5-way setup in `test/` with one BLE device.
 
 ### Configuration
 
-You need to add your BLE devices correct MAC address to `test/klutshnik.cfg`.
-The long-term sigining and noise keys are generated automatically when they
-are not available during booting. You need to fetch them using:
+Before using your ESP32s3-based klutshnik device, you must provision
+it. This is done by connecting your device via USB and running:
 
 ```sh
-python esp32getcfg.py
+python provision-ble.py /dev/ttyACM0 test/klutshnik.cfg test/servers/authorized_keys
 ```
 
-Follow the instructions and make sure that when you add the line to
-the `authorized_keys` file, that you **replace** the last line with the
-one provided by the tool.
+The `/dev/ttyACM0` value is a default, you can leave it out, if your
+device is connected to this port. The other two can also be real
+configuration files, not only test configs. However make sure that the
+`authorized_keys` file contains all other devices already you want to
+use, since there is currently no way to add/change/delete new entries
+on the device (this is an urgent todo, coming very soon).
 
-`esp32getcfg.py` also regenerates your
-`klutshnik/src/authorized_keys.c` file, you need to recompile and
-flash the new firmware image so that it is setup correctly with the
-newly generated keys.
+At the end of the provisioning the script outputs a value, that needs
+to be added to the `authorized_keys` file of all the other klutshnik
+servers in the setup you want to use. In the test-case appending this
+to the file `test/servers/authorized_keys` should do the trick.
 
 ### Running the other servers
 
@@ -101,7 +103,7 @@ they are resolved.
 
  - add support for USB as a communication medium
  - support more boards
- - better configuration instead of recompiling and messing with `esp32getcfg.py`
+ - interface for configuring the device after provisioning (authorized_keys managment, other key mgt)
  - somewhere in the far future perhaps also support WiFi as a medium.
 
 ## Funding
