@@ -25,8 +25,10 @@ manifest:
           - cmsis_6    # required by the ARM port for Cortex-M
           - hal_nordic # required by the custom_plank board (Nordic based)
           - hal_stm32  # required by the nucleo_f302r8 board (STM32 based)
+          - hal_rpi_pico
           - hal_xtensa
           - hal_espressif
+          - hal_nxp
     - name: libsodium-zephyr
       remote:  stef
       repo-path: libsodium-zephyr

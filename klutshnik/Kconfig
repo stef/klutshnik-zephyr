@@ -6,6 +6,22 @@
 # You can browse these options using the west targets menuconfig (terminal) or
 # guiconfig (GUI).
 
+choice KLUTSHNIK_INTERFACE
+        prompt "USE BLE or USB for klutshnik operations"
+        help
+          Select which communication medium to use with your klutshnik device
+
+config KLUTSHNIK_BLE
+        bool "Whether to enable BLE interface of klutshnik"
+        depends on BT_PERIPHERAL
+        help
+          If set to true, klutshnik will use Bluetooth LE for primary communication with the client.
+
+ config KLUTSHNIK_USB_CDC
+         bool "wether to enable the USB CDC/ACM interface of klutshnik"
+
+endchoice # KLUTSHNIK_INTERFACE
+
 menu "Zephyr"
 source "Kconfig.zephyr"
 endmenu
