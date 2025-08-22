@@ -5,17 +5,25 @@ This is an experimental port of the klutshnik server to zephyr os.
 ## Suppported boards
 
  - [xiao esp32s3](https://www.tme.eu/it/en/details/seeed-113991114/development-kits-for-data-transmission/seeed-studio/xiao-esp32s3/)
+ - [teensy 4.1](https://www.pjrc.com/store/teensy41.html)
 
 ## Features
 
- - works transparently with liboprf>=v0.8.0 over Bluetooth LE
+ - works transparently with liboprf>=v0.8.0 over Bluetooth LE or USB CDC-ACM (UART)
  - all klutshnik/test/test.sh tests complete successfully
 
 ## Building
 
 Dependencies:
- - `pip install west esptool pyserial`
- - `xtensa-esp32s3-elf` cross-compiler toolchain.
+ - `pip install west pyserial`
+
+If you target an ESP32 device you also need:
+ - `pip install esptool`
+ - `xtensa-esp32s3-elf` cross-compiler toolchain
+
+If you target a teensy you also need:
+ - [https://www.pjrc.com/teensy/loader_cli.html](teensy loader cli version)
+ - or `arm-none-eabi` cross-compiler toolchain.
 
 ```sh
 west init -m https://github.com/stef/klutshnik-zephyr workspace
@@ -23,16 +31,30 @@ cd workspace
 west update
 west blobs fetch hal_espressif
 cd klutshnik-zephyr
-ZEPHYR_TOOLCHAIN_VARIANT=cross-compile CROSS_COMPILE=/usr/bin/xtensa-esp32s3-elf- west build -p auto -b xiao_esp32s3/esp32s3/procpu klutshnik
+```
+If you are building for the xia_esp32s3:
+```
+FILE_SUFFIX=ble ZEPHYR_TOOLCHAIN_VARIANT=cross-compile CROSS_COMPILE=/usr/bin/xtensa-esp32s3-elf- west build -p auto -b xiao_esp32s3/esp32s3/procpu klutshnik -DCONFIG_KLUTSHNIK_BLE=y
+```
+
+And if you are building for the teensy:
+```
+FILE_SUFFIX=uart ZEPHYR_TOOLCHAIN_VARIANT=cross-compile CROSS_COMPILE=/usr/bin/arm-none-eabi- west build -p auto -b teensy41 klutshnik -DCONFIG_KLUTSHNIK_USB_CDC=y
 ```
 
 Flashing - assuming your xiao is connected via usb and mapped to /dev/ttyACM0:
 
 ```sh
-% west flash --esp-device=/dev/ttyACM0
+west flash --esp-device=/dev/ttyACM0
 ```
 
 Just omit the ``--esp-device` param and it will autoprobe, and be a bit slower.
+
+With a teensy it's simpler if you have the teensy cli loader:
+
+```sh
+west flash
+```
 
 ## Testing
 
@@ -44,7 +66,13 @@ Before using your ESP32s3-based klutshnik device, you must provision
 it. This is done by connecting your device via USB and running:
 
 ```sh
-python provision-ble.py /dev/ttyACM0 test/klutshnik.cfg test/servers/authorized_keys
+python provision-ble.py /dev/ttyACM0 test/klutshnik.cfg test/servers/authorized_keys uart
+```
+
+or
+
+```sh
+python provision-ble.py /dev/ttyACM0 test/klutshnik.cfg test/servers/authorized_keys esp
 ```
 
 The `/dev/ttyACM0` value is a default, you can leave it out, if your
@@ -80,6 +108,11 @@ using (assuming the device is available on `/dev/ttyACM0`:
 west espressif monitor -p /dev/ttyACM0
 ```
 
+or you could just use plain old socat
+```sh
+socat /dev/ttyACM0,b115200,raw,echo=0 -,escape=0x0f
+```
+
 Finally you can start running the tests, for this you need to have the
 klutshnik client installed on your path (python virtual env suffices):
 
@@ -88,20 +121,8 @@ cd test
 rm -rf otherclient/keystore/[0-9a-f]*
 ./test.sh
 ```
-
-## Limitations
-
- - `authorized_keys` is statically compiled in the fw image
- - clients long-term noise and signing keys are also hard-coded in the fw.
- - long-term signing and noise keys are generated automatically and their
-   public keys are exposed over the UART console
-
-use the `esp32getcfg.py` script to work with these limitations, until
-they are resolved.
-
 ## Roadmap
 
- - add support for USB as a communication medium
  - support more boards
  - interface for configuring the device after provisioning (authorized_keys managment, other key mgt)
  - somewhere in the far future perhaps also support WiFi as a medium.
