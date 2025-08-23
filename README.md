@@ -40,29 +40,41 @@ west blobs fetch hal_espressif hal_infineon
 cd klutshnik-zephyr
 ```
 
-You need hal_espressif for the esp32s3 based builds, and the hal_infineon for the raspberry pico 2w based builds.
+You need the hal_espressif blobs for the esp32s3 based builds, and the hal_infineon blobs for the raspberry pico 2w based builds.
 
 ### Building the images
 
 If you are building for the xia_esp32s3:
 ```
-FILE_SUFFIX=ble ZEPHYR_TOOLCHAIN_VARIANT=cross-compile CROSS_COMPILE=/usr/bin/xtensa-esp32s3-elf- west build -p auto -b xiao_esp32s3/esp32s3/procpu klutshnik -DCONFIG_KLUTSHNIK_BLE=y
+FILE_SUFFIX=ble \
+   ZEPHYR_TOOLCHAIN_VARIANT=cross-compile \
+   CROSS_COMPILE=/usr/bin/xtensa-esp32s3-elf- \
+   west build -p auto -b xiao_esp32s3/esp32s3/procpu klutshnik -DCONFIG_KLUTSHNIK_BLE=y
 ```
 
 And if you are building for the teensy 4.1:
 ```
-FILE_SUFFIX=uart ZEPHYR_TOOLCHAIN_VARIANT=cross-compile CROSS_COMPILE=/usr/bin/arm-none-eabi- west build -p auto -b teensy41 klutshnik -DCONFIG_KLUTSHNIK_USB_CDC=y
+FILE_SUFFIX=uart \
+   ZEPHYR_TOOLCHAIN_VARIANT=cross-compile \
+   CROSS_COMPILE=/usr/bin/arm-none-eabi- \
+   west build -p auto -b teensy41 klutshnik -DCONFIG_KLUTSHNIK_USB_CDC=y
 ```
 
 Building for the Raspberry Pico2:
 ```
-FILE_SUFFIX=uart ZEPHYR_TOOLCHAIN_VARIANT=cross-compile CROSS_COMPILE=/usr/bin/arm-none-eabi- west build -p auto -b rpi_pico2/rp2350a/m33 klutshnik -DCONFIG_KLUTSHNIK_USB_CDC=y
+FILE_SUFFIX=uart \
+   ZEPHYR_TOOLCHAIN_VARIANT=cross-compile \
+   CROSS_COMPILE=/usr/bin/arm-none-eabi- \
+   west build -p auto -b rpi_pico2/rp2350a/m33 klutshnik -DCONFIG_KLUTSHNIK_USB_CDC=y
 ```
 
 and with BLE instead:
 
 ```
-FILE_SUFFIX=ble ZEPHYR_TOOLCHAIN_VARIANT=cross-compile CROSS_COMPILE=/usr/bin/arm-none-eabi- west build -p auto -b rpi_pico2/rp2350a/m33 klutshnik -DCONFIG_KLUTSHNIK_BLE=y
+FILE_SUFFIX=ble \
+   ZEPHYR_TOOLCHAIN_VARIANT=cross-compile \
+   CROSS_COMPILE=/usr/bin/arm-none-eabi- \
+   west build -p auto -b rpi_pico2/rp2350a/m33 klutshnik -DCONFIG_KLUTSHNIK_BLE=y
 ```
 
 ### Flashing the images
