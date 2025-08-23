@@ -1,6 +1,6 @@
 # Klutshnik-Zephyr
 
-This is an experimental port of the klutshnik server to zephyr os.
+This is an experimental port of the klutshnik server to zephyr OS.
 
 ## Suppported boards
 
@@ -28,7 +28,7 @@ If you target a teensy you also need:
 
 For the Raspberry Pico2:
  - you currently need this [patch](https://github.com/xudongzheng/zephyr/commit/4c3c8b23ccdd81106d6444199feb45c9b8c2055a.patch) to get the RNG working, apply this in the zephyr directory
- - you also neeed the `arm-none-eabi` cross-compiler toolchain.
+ - you also need the `arm-none-eabi` cross-compiler toolchain.
 
 ### Initializing your zephyr workspace
 
@@ -44,7 +44,7 @@ You need the hal_espressif blobs for the esp32s3 based builds, and the hal_infin
 
 ### Building the images
 
-If you are building for the xia_esp32s3:
+If you are building for the xiao_esp32s3:
 ```
 FILE_SUFFIX=ble \
    ZEPHYR_TOOLCHAIN_VARIANT=cross-compile \
@@ -79,15 +79,15 @@ FILE_SUFFIX=ble \
 
 ### Flashing the images
 
-Flashing - assuming your xiao is connected via usb and mapped to /dev/ttyACM0:
+Flashing - assuming your xiao_esp32s3 is connected via USB and mapped to /dev/ttyACM0:
 
 ```sh
 west flash --esp-device=/dev/ttyACM0
 ```
 
-Just omit the ``--esp-device` param and it will autoprobe, and be a bit slower.
+Just omit the ``--esp-device` param and it will autoprobe, though it will be a bit slower.
 
-With a teensy it's simpler if you have the teensy cli loader:
+With a teensy it's simpler - if you have the teensy cli loader:
 
 ```sh
 west flash
@@ -95,18 +95,18 @@ west flash
 
 ## Testing
 
-The repos ships a configured 5-way setup in `test/` with one BLE device.
+The git repo ships a configured 5-way setup in `test/` with one HW device.
 
 ### Configuration
 
-Before using your ESP32s3-based klutshnik device, you must provision
+Before using your klutshnik device, you must provision
 it. This is done by connecting your device via USB and running:
 
 ```sh
 python provision-ble.py /dev/ttyACM0 test/klutshnik.cfg test/servers/authorized_keys uart
 ```
 
-or
+or if you use an ESP32s3 based device:
 
 ```sh
 python provision-ble.py /dev/ttyACM0 test/klutshnik.cfg test/servers/authorized_keys esp
