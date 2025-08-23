@@ -4,7 +4,7 @@ This is an experimental port of the [klutshnik](https://klutshnik.info) server t
 
 ## Suppported boards
 
- - Bluetooth LE [xiao esp32s3](https://www.tme.eu/it/en/details/seeed-113991114/development-kits-for-data-transmission/seeed-studio/xiao-esp32s3/)
+ - Bluetooth LE [xiao esp32s3](https://www.tme.eu/it/en/details/seeed-113991114/development-kits-for-data-transmission/seeed-studio/xiao-esp32s3/) (probably anything based on an ESP32s3)
  - USB (CDC-ACM) [teensy 4.1](https://www.pjrc.com/store/teensy41.html) (probably also the 4.0)
  - USB (CDC-ACM) [raspberry pico2](https://www.raspberrypi.com/documentation/microcontrollers/pico-series.html#pico-2-family) (probably anything using an rp2350)
 
