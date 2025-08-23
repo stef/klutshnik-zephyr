@@ -1,6 +1,6 @@
 # Klutshnik-Zephyr
 
-This is an experimental port of the klutshnik server to zephyr OS.
+This is an experimental port of the [klutshnik](https://klutshnik.info) server to zephyr OS.
 
 ## Suppported boards
 
