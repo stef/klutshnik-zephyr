@@ -10,7 +10,7 @@ This is an experimental port of the [klutshnik](https://klutshnik.info) server t
 
 ## Features
 
- - works transparently with liboprf>=v0.8.0 over Bluetooth LE or USB CDC-ACM (UART)
+ - works transparently with liboprf>=v0.9.0 over Bluetooth LE or USB CDC-ACM (UART)
  - all klutshnik/test/test.sh tests complete successfully
 
 ## Building
