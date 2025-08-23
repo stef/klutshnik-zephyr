@@ -16,14 +16,14 @@ This is an experimental port of the klutshnik server to zephyr os.
 ## Building
 
 ### Dependencies:
- - `pip install west pyserial`
+ - `pip install west pyserial tomlkit pyudev pysodium pyoprf`
 
 If you target an ESP32 device you also need:
  - `pip install esptool`
  - `xtensa-esp32s3-elf` cross-compiler toolchain
 
 If you target a teensy you also need:
- - [https://www.pjrc.com/teensy/loader_cli.html](teensy loader cli version)
+ - [teensy loader cli version](https://www.pjrc.com/teensy/loader_cli.html)
  - and the `arm-none-eabi` cross-compiler toolchain.
 
 For the Raspberry Pico2:
