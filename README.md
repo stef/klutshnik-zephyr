@@ -161,7 +161,7 @@ rm -rf otherclient/keystore/[0-9a-f]*
 ## Roadmap
 
  - support more boards
- - interface for configuring the device after provisioning (authorized_keys managment, other key mgt)
+ - interface for configuring the device after provisioning (authorized_keys management, other key mgt)
  - somewhere in the far future perhaps also support WiFi as a medium.
 
 ## Funding
