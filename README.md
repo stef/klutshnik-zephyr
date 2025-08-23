@@ -4,8 +4,9 @@ This is an experimental port of the klutshnik server to zephyr os.
 
 ## Suppported boards
 
- - [xiao esp32s3](https://www.tme.eu/it/en/details/seeed-113991114/development-kits-for-data-transmission/seeed-studio/xiao-esp32s3/)
- - [teensy 4.1](https://www.pjrc.com/store/teensy41.html)
+ - BLE [xiao esp32s3](https://www.tme.eu/it/en/details/seeed-113991114/development-kits-for-data-transmission/seeed-studio/xiao-esp32s3/)
+ - UART [teensy 4.1](https://www.pjrc.com/store/teensy41.html) (probably also the 4.0)
+ - UART [raspberry pico2](https://www.raspberrypi.com/documentation/microcontrollers/pico-series.html#pico-2-family)
 
 ## Features
 
@@ -14,7 +15,7 @@ This is an experimental port of the klutshnik server to zephyr os.
 
 ## Building
 
-Dependencies:
+### Dependencies:
  - `pip install west pyserial`
 
 If you target an ESP32 device you also need:
@@ -25,22 +26,46 @@ If you target a teensy you also need:
  - [https://www.pjrc.com/teensy/loader_cli.html](teensy loader cli version)
  - or `arm-none-eabi` cross-compiler toolchain.
 
+For the Raspberry Pico2 you currently need this patch to get the RNG working:
+ - https://github.com/xudongzheng/zephyr/commit/4c3c8b23ccdd81106d6444199feb45c9b8c2055a.patch
+   apply this in the zephyr directory
+
+### Initializing your zephyr workspace
+
 ```sh
 west init -m https://github.com/stef/klutshnik-zephyr workspace
 cd workspace
 west update
-west blobs fetch hal_espressif
+west blobs fetch hal_espressif hal_infineon
 cd klutshnik-zephyr
 ```
+
+You need hal_espressif for the esp32s3 based builds, and the hal_infineon for the raspberry pico 2w based builds.
+
+### Building the images
+
 If you are building for the xia_esp32s3:
 ```
 FILE_SUFFIX=ble ZEPHYR_TOOLCHAIN_VARIANT=cross-compile CROSS_COMPILE=/usr/bin/xtensa-esp32s3-elf- west build -p auto -b xiao_esp32s3/esp32s3/procpu klutshnik -DCONFIG_KLUTSHNIK_BLE=y
 ```
 
-And if you are building for the teensy:
+And if you are building for the teensy 4.1:
 ```
 FILE_SUFFIX=uart ZEPHYR_TOOLCHAIN_VARIANT=cross-compile CROSS_COMPILE=/usr/bin/arm-none-eabi- west build -p auto -b teensy41 klutshnik -DCONFIG_KLUTSHNIK_USB_CDC=y
 ```
+
+Building for the Raspberry Pico2:
+```
+FILE_SUFFIX=uart ZEPHYR_TOOLCHAIN_VARIANT=cross-compile CROSS_COMPILE=/usr/bin/arm-none-eabi- west build -p auto -b rpi_pico2/rp2350a/m33 klutshnik -DCONFIG_KLUTSHNIK_USB_CDC=y
+```
+
+and with BLE instead:
+
+```
+FILE_SUFFIX=ble ZEPHYR_TOOLCHAIN_VARIANT=cross-compile CROSS_COMPILE=/usr/bin/arm-none-eabi- west build -p auto -b rpi_pico2/rp2350a/m33 klutshnik -DCONFIG_KLUTSHNIK_BLE=y
+```
+
+### Flashing the images
 
 Flashing - assuming your xiao is connected via usb and mapped to /dev/ttyACM0:
 
