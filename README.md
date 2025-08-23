@@ -93,11 +93,7 @@ With a teensy it's simpler - if you have the teensy cli loader:
 west flash
 ```
 
-## Testing
-
-The git repo ships a configured 5-way setup in `test/` with one HW device.
-
-### Configuration
+## Provisioning a new device
 
 Before using your klutshnik device, you must provision
 it. This is done by connecting your device via USB and running:
@@ -123,6 +119,10 @@ At the end of the provisioning the script outputs a value, that needs
 to be added to the `authorized_keys` file of all the other klutshnik
 servers in the setup you want to use. In the test-case appending this
 to the file `test/servers/authorized_keys` should do the trick.
+
+## Testing
+
+The git repo ships a configured 5-way setup in `test/` with one HW device.
 
 ### Running the other servers
 
