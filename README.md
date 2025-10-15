@@ -5,7 +5,7 @@ This is an experimental port of the [klutshnik](https://klutshnik.info) server t
 ## Suppported boards
 
  - Bluetooth LE [xiao esp32s3](https://www.tme.eu/it/en/details/seeed-113991114/development-kits-for-data-transmission/seeed-studio/xiao-esp32s3/) (probably anything based on an ESP32s3) - very small, very cheap (~9eur), quite performant.
- - USB (CDC-ACM) [teensy 4.[01]](https://www.pjrc.com/store/teensy41.html) - smallish, but quite expensive (~34/26eur), very fast.
+ - USB (CDC-ACM) [teensy 4.[01]](https://www.pjrc.com/store/teensy41.html) - smallish, but quite expensive (~26/34eur), very fast.
  - USB (CDC-ACM) [raspberry pico2](https://www.raspberrypi.com/documentation/microcontrollers/pico-series.html#pico-2-family) (probably anything using an rp2350) - smallish, very cheap (~7 eur/9 eur with BLE), lot's of hw security features (to be used)
 
 ## Features
