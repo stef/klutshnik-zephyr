@@ -11,11 +11,11 @@ choice KLUTSHNIK_INTERFACE
         help
           Select which communication medium to use with your klutshnik device
 
-config KLUTSHNIK_BLE
-        bool "Whether to enable BLE interface of klutshnik"
-        depends on BT_PERIPHERAL
-        help
-          If set to true, klutshnik will use Bluetooth LE for primary communication with the client.
+ config KLUTSHNIK_BLE
+         bool "Whether to enable BLE interface of klutshnik"
+         depends on BT_PERIPHERAL
+         help
+           If set to true, klutshnik will use Bluetooth LE for primary communication with the client.
 
  config KLUTSHNIK_USB_CDC
          bool "wether to enable the USB CDC/ACM interface of klutshnik"
