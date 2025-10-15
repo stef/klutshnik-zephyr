@@ -1382,7 +1382,7 @@ static int delete(const CFG *cfg, const DeleteReq *req) {
   return 0;
 }
 
-static int save(const char *path, const size_t key_len, uint8_t *key, const int open_flags) {
+int save(const char *path, const size_t key_len, uint8_t *key, const int open_flags) {
   struct fs_file_t file;
   int rc, ret;
   fs_file_t_init(&file);
@@ -1475,7 +1475,7 @@ void printb64(const char* prefix, const size_t buf_len, const uint8_t *buf) {
   LOG_INF("%s %s", prefix, b64);
 }
 
-static int load(const char* path, const size_t buf_len, uint8_t *buf) {
+int load(const char* path, const size_t buf_len, uint8_t *buf) {
   int rc, ret;
   struct fs_file_t file;
   fs_file_t_init(&file);
