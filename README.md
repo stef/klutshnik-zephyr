@@ -122,6 +122,39 @@ to be added to the `authorized_keys` file of all the other klutshnik
 servers in the setup you want to use. In the test-case appending this
 to the file `test/servers/authorized_keys` should do the trick.
 
+## Manual Device Configuration
+
+The `provision-ble.py` should get you all set up. But if you later
+have to do some reconfiguration - klutshnik-zephyr comes with a USB
+UART shell that allows you to do this manually. For klutshnik devices
+that use USB for communication, there is always two serial ports
+created the first is the management port with the shell and the log,
+and the second port is always the klutshnik protocol port. So if you
+have both `/dev/ttyACM0` and `/dev/ttyACM1` then the shell is on
+`/dev/ttyACM0`
+
+The following commands are supported:
+
+Set the owners client ltsig public key (currently unused): `init ltsig <base64 ltsig pubkey>`
+
+Set the owners client noise public key (also currently unused): `init noise <base64 ltsig pubkey>`
+
+Check if the initial provisioning is complete (init ltsig/noise done,
+and at least 3 entries in the authorized_keys file): `init check`
+
+Add a new entry to the `authorized_keys` file: `authkey add <base64 authkey entry>`
+
+Delete the `authorized_keys` file: `authkey del`
+
+Get the contents of the `authorized_keys` file: `authkey get`
+
+Get the devices ltsig public key: `getcfg ltsig`
+
+Get the devices noise public key: `getcfg noise`
+
+Get the devices MAC - if the device uses Bluetooth LE as the
+communication layer: `getcfg mac`
+
 ## Testing
 
 The git repo ships a configured 5-way setup in `test/` with one HW device.
