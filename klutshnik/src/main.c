@@ -157,6 +157,11 @@ typedef struct {
   uint8_t noise[32];
 } __attribute__((__packed__)) AuthKeys;
 
+const InitFiles init_files[] = {
+  {"/lfs/cfg/owner_pk", 32},
+  {"/lfs/cfg/authorized_clients", 32},
+  {"/lfs/cfg/authorized_keys", 196}};
+
 uint8_t inbuf[1024*32];
 int inbuf_end=0;
 int inbuf_start=0;
@@ -1429,6 +1434,33 @@ static int initkey(const char *path, const size_t key_len, uint8_t *key) {
   return save(path,key_len,key,0);
 }
 
+int init_is_incomplete(void) {
+  struct fs_dirent dirent;
+  uint8_t res=0;
+  for(int i=0;i<3;i++) {
+    int rc = fs_stat(init_files[i].path, &dirent);
+    if (rc < 0) {
+      res|=(1 << (i*2));
+      continue;
+    } else {
+      if(dirent.type != FS_DIR_ENTRY_FILE) {
+        res|=(2 << (i*2));
+        continue;
+      }
+    }
+    if(i<2) {
+      if(dirent.size != init_files[i].min) {
+        res|=(3 << (i*2));
+        continue;
+      }
+    } else if(dirent.size < init_files[i].min) {
+      res|=(3 << (i*2));
+      continue;
+    }
+  }
+  return res;
+}
+
 static int initcfg(CFG *cfg) {
   int rc;
   rc = initkey("/lfs/cfg/noise_key", 32, cfg->noise_sk);
@@ -1516,57 +1548,6 @@ static int loadcfg(const char* path, const size_t buf_len, uint8_t *buf) {
   return 0;
 }
 
-//#if DT_NODE_EXISTS(UART_DEVICE_NODE)
-//void serial_cb(const struct device *dev, void *cfg_p) {
-//	uint8_t c;
-//	if (!uart_irq_update(uart_dev)) {
-//		return;
-//	}
-//
-//	if (!uart_irq_rx_ready(uart_dev)) {
-//		return;
-//	}
-//
-//   CFG *cfg = cfg_p;
-//	/* read until FIFO empty */
-//   const uint8_t preamble[]="KLUTSHNIK-DEVICE-INIT";
-//   static int p_idx=0;
-//   static int stage=0;
-//	while (uart_fifo_read(uart_dev, &c, 1) == 1) {
-//     if(stage==0) {
-//       if(p_idx==sizeof(preamble)) stage==1;
-//       else if(c==preamble[p_idx]) p_idx++;
-//       else if(p_idx>0) p_idx=0;
-//       continue;
-//     }
-//     //if(c=='r') uc = 'r';
-//     //if(uc=='I' && c=='i') {
-//     //  for(int i=0;i<64;i++) {
-//     //    if(uart_fifo_read(uart_dev, &cfg->auth_keys[0].ltsig[i], 1) != 1) {
-//     //      LOG_ERR("failed to read auth_key from uart, at pos: %d", i);
-//     //      return;
-//     //    }
-//     //  }
-//     //  uc='i';
-//     //}
-//
-//     //if(c=='k') uc = 'k'; read 32 bytes, put them into queue
-//     //if ((c == '\n' || c == '\r') && uart_rx_buf_pos > 0) {
-//     //  /* terminate string */
-//     //  uart_rx_buf[uart_rx_buf_pos] = '\0';
-//
-//     //  /* if queue is full, message is silently dropped */
-//     //  k_msgq_put(&uart_msgq, &uart_rx_buf, K_NO_WAIT);
-//
-//     //  /* reset the buffer (it was copied to the msgq) */
-//     //  uart_rx_buf_pos = 0;
-//     //} else if (uart_rx_buf_pos < (sizeof(uart_rx_buf) - 1)) {
-//     //  uart_rx_buf[uart_rx_buf_pos++] = c;
-//     //}
-//	}
-//}
-//#endif
-
 static int getcfg(CFG *cfg) {
   if(0!=loadcfg("/lfs/cfg/noise_key", 32, cfg->noise_sk)) return -1;
 
@@ -1582,131 +1563,6 @@ static int getcfg(CFG *cfg) {
   }
   sodium_memzero(noise_seed,sizeof noise_seed);
   if(0!=loadcfg("/lfs/cfg/record_salt", 32, cfg->rec_salt)) return -1;
-
-  return 0;
-}
-
-//static int start_uart_recv(CFG *cfg) {
-//#if DT_NODE_EXISTS(UART_DEVICE_NODE)
-//  if (!device_is_ready(uart_dev)) {
-//    LOG_ERR("UART device not found!");
-//    return -1;
-//  }
-//  LOG_INF("UART device found!");
-//  err = uart_irq_callback_user_data_set(uart_dev, serial_cb, cfg);
-//  if (err < 0) {
-//    if (err == -ENOTSUP) {
-//      LOG_ERR("Interrupt-driven UART API support not enabled");
-//    } else if (err == -ENOSYS) {
-//      LOG_ERR("UART device does not support interrupt-driven API");
-//    } else {
-//      LOG_ERR("Error setting UART callback: %d", err);
-//    }
-//  } else {
-//    uart_irq_rx_enable(uart_dev);
-//  }
-//#endif
-//}
-
-static int uart_recv_cfg(CFG *cfg) {
-  printk("no configuration found. waiting for initialization\n");
-
-  const uint8_t preamble[]="KLUTSHNIK-DEVICE-INIT";
-  int p_idx=0, ret;
-  char c;
-
-  // read preamble
-  while(1) {
-    ret = uart_poll_in(uart_dev, &c);
-    if(ret==-1) {
-      k_sleep(K_MSEC(10));
-      continue;
-    }
-    if(ret<0) {
-      LOG_ERR("uart poll returned error: %d", ret);
-      log_flush();
-      sys_reboot(SYS_REBOOT_COLD);
-    }
-    if(c==preamble[p_idx]) p_idx++;
-    else if(p_idx>0) {
-      p_idx=0;
-      continue;
-    }
-    if(p_idx==sizeof(preamble)-1) break;
-  }
-
-  p_idx=0;
-  size_t pkt_len = 0;
-
-  // read total length
-  while(p_idx<2) {
-    ret = uart_poll_in(uart_dev, &c);
-    if(ret==-1) {
-      k_sleep(K_MSEC(10));
-      continue;
-    }
-    if(ret<0) {
-      LOG_ERR("uart poll returned error: %d", ret);
-      log_flush();
-      sys_reboot(SYS_REBOOT_COLD);
-    }
-    pkt_len = (pkt_len << 8) | c;
-    p_idx++;
-  }
-  //LOG_DBG("init pkt size: %d", pkt_len);
-  if(pkt_len<64+1+64*2) {
-    LOG_ERR("cfg packet is too small: %d", pkt_len);
-  }
-
-  uint8_t pkt[pkt_len];
-  p_idx=0;
-  while(p_idx<pkt_len) {
-    ret = uart_poll_in(uart_dev, &c);
-    if(ret==-1) {
-      k_sleep(K_MSEC(10));
-      continue;
-    }
-    if(ret<0) {
-      LOG_ERR("uart poll returned error: %d", ret);
-      log_flush();
-      sys_reboot(SYS_REBOOT_COLD);
-    }
-    pkt[p_idx++] = c;
-  }
-  int auth_key_len = pkt[64];
-  LOG_DBG("read init pkt. contains %d authorized_keys", auth_key_len);
-
-  if(auth_key_len*64+65!=pkt_len) {
-    LOG_ERR("invalid number of authorized_keys: %d, does not correspond to packet size of %d", pkt[64], pkt_len);
-    log_flush();
-    sys_reboot(SYS_REBOOT_COLD);
-  }
-
-  LOG_DBG("Saving config");
-  fs_mkdir("/lfs/cfg");
-  ret=save("/lfs/cfg/authorized_clients", 32, pkt+32, 0);
-  if(0!=ret) {
-    LOG_ERR("failed to save authorized client key of initializer: %d. aborting.", ret);
-    rmdir("/lfs/cfg");
-    log_flush();
-    sys_reboot(SYS_REBOOT_COLD);
-  }
-
-  uint8_t *key = pkt+65;
-  for(int i=0;i<auth_key_len;i++,key+=64) {
-    if(memcmp(pkt,key,64)==0) continue;
-    //LOG_HEXDUMP_INF(key, 64, "saving authorized_key");
-    //log_flush();
-    ret = save("/lfs/cfg/authorized_keys", 64, key, FS_O_APPEND);
-    if(0!=ret) {
-      LOG_ERR("failed to save authorized client key of initializer: %d. aborting.", ret);
-      rmdir("/lfs/cfg");
-      log_flush();
-      sys_reboot(SYS_REBOOT_COLD);
-    }
-  }
-  LOG_DBG("Saved cfg");
-  log_flush();
 
   return 0;
 }
@@ -1746,10 +1602,9 @@ static int boot(CFG *cfg) {
   if(-ENOENT == rc) {
     LOG_WRN("W /lfs/cfg doesn't exist, initializing");
 
-    if(0!=uart_recv_cfg(cfg)) {
-      LOG_ERR("failed to receive config via UART. halting.");
-      log_flush();
-      sys_reboot(SYS_REBOOT_COLD);
+    printk("no configuration found. waiting for client initialization\n");
+    while(0!=init_is_incomplete()) {
+      k_sleep(K_MSEC(10));
     }
 
     if(0!=initcfg(cfg)) {
