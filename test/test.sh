@@ -52,13 +52,15 @@ printf "%s\n/tmp/klutshniked" "$delta" | klutshnik update
 echo decrypt again updated file with newly added user
 klutshnik decrypt </tmp/klutshniked
 
-echo delete key by unauthorized newsly added user
+echo delete key by unauthorized newly added user
 klutshnik delete importedkey || true
 cd ..
 
+sleep 1 # due to fail the device reboots
 echo decrypt updated file
 cat kltsk /tmp/klutshniked | klutshnik decrypt || true
 
+sleep 1 # due to fail the device reboots
 echo refresh key meta
 klutshnik refresh keyid1 <kltsk
 
