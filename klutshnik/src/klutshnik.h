@@ -17,6 +17,13 @@ typedef struct {
   uint8_t rec_salt[32];
 } CFG;
 
+typedef struct {
+  char *path;
+  size_t min;
+} InitFiles;
+
+extern const InitFiles init_files[];
+
 extern KlutshnikState kstate;
 
 extern Noise_XK_session_t *session;
@@ -32,5 +39,8 @@ int send_pkt(const uint8_t *msg, const size_t msg_len);
 int send_plaintext(const uint8_t *msg, const size_t msg_len);
 int read(size_t size, uint8_t **buf);
 void printb64(const char* prefix, const size_t buf_len, const uint8_t *buf);
+int load(const char* path, const size_t buf_len, uint8_t *buf);
+int save(const char *path, const size_t key_len, uint8_t *key, const int open_flags);
+int init_is_incomplete(void);
 
 #endif // KLUTSHNIK_H
