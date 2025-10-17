@@ -70,15 +70,6 @@ FILE_SUFFIX=uart \
    west build -p auto -b rpi_pico2/rp2350a/m33 klutshnik -DCONFIG_KLUTSHNIK_USB_CDC=y
 ```
 
-and with BLE instead:
-
-```
-FILE_SUFFIX=ble \
-   ZEPHYR_TOOLCHAIN_VARIANT=cross-compile \
-   CROSS_COMPILE=/usr/bin/arm-none-eabi- \
-   west build -p auto -b rpi_pico2/rp2350a/m33 klutshnik -DCONFIG_KLUTSHNIK_BLE=y
-```
-
 ### Flashing the images
 
 Flashing - assuming your xiao_esp32s3 is connected via USB and mapped to /dev/ttyACM0:
@@ -114,8 +105,7 @@ The `/dev/ttyACM0` value is a default, you can leave it out, if your
 device is connected to this port. The other two can also be real
 configuration files, not only test configs. However make sure that the
 `authorized_keys` file contains all other devices already you want to
-use, since there is currently no way to add/change/delete new entries
-on the device (this is an urgent todo, coming very soon).
+use, otherwise you have to add them manually using the USB serial shell.
 
 At the end of the provisioning the script outputs a value, that needs
 to be added to the `authorized_keys` file of all the other klutshnik
