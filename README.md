@@ -27,7 +27,7 @@ If you target a teensy you also need:
  - and the `arm-none-eabi` cross-compiler toolchain.
 
 For the Raspberry Pico2:
- - you currently need this [patch](https://github.com/xudongzheng/zephyr/commit/4c3c8b23ccdd81106d6444199feb45c9b8c2055a.patch) to get the RNG working, apply this in the zephyr directory
+ - you currently need this [patch](https://github.com/xudongzheng/zephyr/commit/29e0630267bd920a5d1087a1aec14f22319487b9.patch) to get the RNG working, apply this in the zephyr directory
  - you also need the `arm-none-eabi` cross-compiler toolchain.
 
 ### Initializing your zephyr workspace
@@ -92,13 +92,13 @@ Before using your klutshnik device, you must provision
 it. This is done by connecting your device via USB and running:
 
 ```sh
-python provision-ble.py /dev/ttyACM0 test/klutshnik.cfg test/servers/authorized_keys uart
+klutshnik provision /dev/ttyACM0 test/klutshnik.cfg test/servers/authorized_keys uart
 ```
 
 or if you use an ESP32s3 based device:
 
 ```sh
-python provision-ble.py /dev/ttyACM0 test/klutshnik.cfg test/servers/authorized_keys esp
+klutshnik provision /dev/ttyACM0 test/klutshnik.cfg test/servers/authorized_keys esp
 ```
 
 The `/dev/ttyACM0` value is a default, you can leave it out, if your
@@ -114,7 +114,7 @@ to the file `test/servers/authorized_keys` should do the trick.
 
 ## Manual Device Configuration
 
-The `provision-ble.py` should get you all set up. But if you later
+The command `klutshnik provision` should get you all set up. But if you later
 have to do some reconfiguration - klutshnik-zephyr comes with a USB
 UART shell that allows you to do this manually. For klutshnik devices
 that use USB for communication, there is always two serial ports
@@ -186,7 +186,6 @@ rm -rf otherclient/keystore/[0-9a-f]*
 ## Roadmap
 
  - support more boards
- - interface for configuring the device after provisioning (authorized_keys management, other key mgt)
  - somewhere in the far future perhaps also support WiFi as a medium.
 
 ## Funding
