@@ -1,0 +1,68 @@
+///delete-node/ &code_partition;
+
+/ {
+ fstab {
+  compatible = "zephyr,fstab";
+  lfs1: lfs1 {
+      compatible = "zephyr,fstab,littlefs";
+      mount-point = "/lfs";
+      partition = <&lfs1_partition>;
+      automount;
+      read-size = <16>;
+      prog-size = <16>;
+      cache-size = <256>;
+      lookahead-size = <32>;
+      block-cycles = <512>;
+  };
+ };
+ chosen {
+    //zephyr,console = &cdc_acm_uart0;
+    zephyr,shell-uart = &cdc_acm_uart0;
+    zephyr,flash-controller = &qmi;
+	 zephyr,flash = &flash0;
+ };
+};
+
+&flash0 {
+	partitions {
+      compatible = "fixed-partitions";
+      #address-cells = <1>;
+      #size-cells = <1>;
+
+		/* Reserved memory for an image definition block. The block is much
+		* smaller than 256 bytes, but in practice the linker places the vector
+		* table at a much larger alignment offset.
+		*/
+		image_def: partition@0 {
+			label = "image_def";
+			reg = <0x00000000 0x100>;
+			read-only;
+		};
+
+		/*
+		* Usable flash. Starts at 0x100, after the image definition block.
+		* The partition size is 4MB minus the 0x100 bytes taken by the
+		* image definition.
+		*/
+		code_partition: partition@100 {
+			label = "code-partition";
+			reg = <0x100 (DT_SIZE_M(2) - 0x100)>;
+			read-only;
+		};
+
+      /* Use second half of flash for the filesystem. */
+      lfs1_partition: partition@200000 {
+         label = "storage";
+         reg = <0x200000 DT_SIZE_M(2)>;
+		};
+	};
+};
+
+&zephyr_udc0 {
+	cdc_acm_uart0: cdc_acm_uart0 {
+		compatible = "zephyr,cdc-acm-uart";
+	};
+	cdc_acm_uart1: cdc_acm_uart1 {
+		compatible = "zephyr,cdc-acm-uart";
+	};
+};
