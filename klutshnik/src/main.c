@@ -288,14 +288,6 @@ static int setup_noise_connection(CFG *cfg) {
   LOG_INF("waiting for connection");
   log_flush();
   while(kstate!=CONNECTED) {
-    // todo refactor this
-    //if(uc=='r') {
-    //  LOG_INF("resetting /data");
-    //  log_flush();
-    //  rmdir("/lfs/data");
-    //  fs_mkdir("/lfs/data");
-    //  uc=0;
-    //}
     k_sleep(K_MSEC(10));
   };
   LOG_INF("connected!");
