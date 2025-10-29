@@ -80,7 +80,8 @@ static void disconnected(struct bt_conn *conn, uint8_t reason) {
   bt_c = NULL;
   inbuf_end=0;
   inbuf_start=0;
-  // todo free noise resources!
+  Noise_XK_session_free(session);
+  Noise_XK_device_free(dev);
 }
 
 static void start_adv(void) {
