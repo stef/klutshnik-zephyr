@@ -22,6 +22,11 @@ typedef struct {
   size_t min;
 } InitFiles;
 
+typedef struct {
+  uint32_t refs;
+  uint8_t key[32];
+} __attribute__((__packed__)) NoiseRec;
+
 extern const InitFiles init_files[];
 
 extern KlutshnikState kstate;
