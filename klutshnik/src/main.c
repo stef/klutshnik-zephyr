@@ -698,6 +698,7 @@ static int auth(const CFG *cfg, const KlutshnikOp op, uint8_t pk[crypto_sign_PUB
   }
 
   LOG_INF("authorized: %s", hex);
+  log_flush();
   return 0;
 }
 
