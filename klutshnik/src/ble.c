@@ -267,6 +267,11 @@ void reset_ble(void) {
   start_adv();
 }
 
+int ble_disconnect(void) {
+  if(bt_c==NULL) return -ENOTCONN;
+  return bt_conn_disconnect(bt_c, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+}
+
 int ble_init(CFG *cfg) {
   int err = bt_enable(NULL);
   if (err) {
