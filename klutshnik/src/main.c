@@ -106,6 +106,12 @@ typedef enum {
     DELETE_perm  = 8,
 } KlutshnikPerms;
 
+typedef enum {
+    USER_LIST    = 0,
+    USER_ADD     = 0xf0,
+    USER_DEL     = 0xff,
+} KlutshnikUserOp;
+
 typedef struct {
   uint8_t op;
   uint8_t version;
@@ -148,7 +154,7 @@ typedef struct {
   uint8_t op;
   uint8_t version;
   uint8_t id[crypto_generichash_BYTES];
-  uint8_t readonly;
+  uint8_t userop;
 } __attribute__((__packed__)) ModAuthReq;
 
 typedef struct {
@@ -162,7 +168,7 @@ const InitFiles init_files[] = {
   {"/lfs/cfg/ltsig_seed", crypto_sign_SEEDBYTES},
   {"/lfs/cfg/record_salt", 32},
   {"/lfs/cfg/owner_pk", 32},
-  {"/lfs/cfg/authorized_clients", 32},
+  {"/lfs/cfg/authorized_clients", sizeof(NoiseRec)},
   {"/lfs/cfg/authorized_keys", 196}};
 
 uint8_t inbuf[1024*32];
@@ -242,8 +248,8 @@ static int load_noisekeys(const CFG *cfg, Noise_XK_device_t *dev) {
 
   int count = 0;
   while(1) {
-    uint8_t k[32];
-    rc = fs_read(&file, k, 32);
+    NoiseRec k;
+    rc = fs_read(&file, &k, sizeof k);
     if (rc < 0) {
       LOG_ERR("FAIL: read %s: %d", fname, rc);
       goto out;
@@ -252,11 +258,11 @@ static int load_noisekeys(const CFG *cfg, Noise_XK_device_t *dev) {
       rc = count;
       goto out;
     }
-    if(rc!=32) {
-      LOG_ERR("FAIL: short read only %dB instead of 32B", rc);
+    if(rc!=sizeof(k)) {
+      LOG_ERR("FAIL: short read only %dB instead of %dB", rc, sizeof(k));
       goto out;
     }
-    if (!Noise_XK_device_add_peer(dev, (uint8_t*) "klutshnik client", k)) {
+    if (!Noise_XK_device_add_peer(dev, (uint8_t*) "klutshnik client", k.key)) {
       LOG_ERR("Failed to add client key to noise device");
       rc = -1;
       goto out;
@@ -1268,6 +1274,174 @@ static int decrypt(const CFG *cfg, const DecryptReq *req) {
   return 0;
 }
 
+static int add_auth_client(const uint8_t *key) {
+  const char path[]="/lfs/cfg/authorized_clients";
+  struct fs_file_t file;
+  fs_file_t_init(&file);
+  int rc = fs_open(&file, path, FS_O_RDWR);
+  if (rc < 0) {
+    LOG_ERR("FAIL: open %s: %d", path, rc);
+    return rc;
+  }
+
+  uint8_t crec_buf[sizeof(NoiseRec)];
+  NoiseRec *crec = (NoiseRec *) crec_buf;
+  while(1) {
+    rc = fs_read(&file, crec_buf, sizeof crec_buf);
+    if (rc < 0) {
+      LOG_ERR("FAIL: read %s: %d", path, rc);
+      break;
+    }
+    if(rc==0) { // eof, rec not in file
+      uint8_t rec_buf[sizeof(NoiseRec)];
+      NoiseRec *rec = (NoiseRec*) rec_buf;
+      rec->refs=1;
+      memcpy(rec->key, key, sizeof(rec->key));
+
+      rc =fs_write(&file, rec_buf, sizeof rec_buf);
+      if (rc < 0) {
+        LOG_ERR("FAIL: write %s: %d", path, rc);
+        break;
+      }
+      if (rc != sizeof rec_buf) {
+        LOG_ERR("E error short write, only %d instead of requested %d bytes read from %s", rc, sizeof rec_buf, path);
+        rc =  -ENODATA;
+        break;
+      }
+      rc = 0;
+      break;
+    }
+    if(rc!=sizeof crec_buf) {
+      LOG_ERR("E error short read, only %d instead of requested %d bytes read from %s", rc, sizeof crec_buf, path);
+      rc =  -ENODATA;
+      break;
+    }
+    if(memcmp(crec->key, key, sizeof crec->key)==0) {
+      // TODO check if the key has already been seen earlier. same key multiple times in the file is not good.
+      LOG_INF("record already included in %s", path);
+      if(crec->refs == 0xffffffff) {
+        LOG_INF("is owner noise key");
+        rc = 0;
+        break;
+      }
+      if(crec->refs > 0xfffffff0) {
+        LOG_ERR("too many references to noisekey");
+        rc = -1;
+        break;
+      }
+      crec->refs++;
+      rc = fs_seek(&file, - (sizeof(NoiseRec)), FS_SEEK_CUR);
+      if(rc != 0) {
+        LOG_ERR("E error seeking backwards to increase ref counter on noisekey: %d", rc);
+        break;
+      }
+      rc =fs_write(&file, crec_buf, sizeof crec->refs);
+      if (rc < 0) {
+        LOG_ERR("FAIL: write updated noise key refs to %s: %d", path, rc);
+        break;
+      }
+      if (rc != sizeof crec->refs) {
+        LOG_ERR("E error short write, only %d instead of requested %d bytes read from %s", rc, sizeof crec->refs, path);
+        rc =  -ENODATA;
+        break;
+      }
+      rc = 0;
+      break;
+    }
+  }
+
+  int ret = fs_close(&file);
+  if (ret < 0) {
+    LOG_ERR("FAIL: close %s: %d", path, ret);
+    return ret;
+  }
+
+  return rc;
+}
+
+static int del_auth_client(const uint8_t *key) {
+  const char path[]="/lfs/cfg/authorized_clients";
+  struct fs_file_t file;
+  fs_file_t_init(&file);
+  int rc = fs_open(&file, path, FS_O_READ);
+  if (rc < 0) {
+    LOG_ERR("FAIL: open %s: %d", path, rc);
+    return rc;
+  }
+
+  const char new_path[]="/lfs/cfg/authorized_clients.new";
+  struct fs_file_t new_file;
+  fs_file_t_init(&new_file);
+  rc = fs_open(&new_file, new_path, FS_O_WRITE);
+  if (rc < 0) {
+    LOG_ERR("FAIL: open %s: %d", new_path, rc);
+    int ret = fs_close(&file);
+    if (ret < 0) {
+      LOG_ERR("FAIL: close %s: %d", new_path, ret);
+      return ret;
+    }
+    return rc;
+  }
+
+  uint8_t crec_buf[sizeof(NoiseRec)];
+  NoiseRec *crec = (NoiseRec *) crec_buf;
+  while(1) {
+    rc = fs_read(&file, crec_buf, sizeof crec_buf);
+    if (rc < 0) {
+      LOG_ERR("FAIL: read %s: %d", path, rc);
+      break;
+    }
+    if(rc==0) { // eof, rec not in file
+      break;
+    }
+    if(rc!=sizeof crec_buf) {
+      LOG_ERR("E error short read, only %d instead of requested %d bytes read from %s", rc, sizeof crec_buf, path);
+      rc =  -ENODATA;
+      break;
+    }
+    if(memcmp(crec->key, key, sizeof crec->key)==0) {
+      LOG_INF("record already included in %s", path);
+      if(crec->refs == 0xffffffff) {
+        LOG_ERR("is owner noise key, cannot remove");
+        rc = 0;
+        break;
+      }
+      if(crec->refs == 1) {
+        LOG_INF("last reference to noisekey, removing");
+        continue;
+      }
+      crec->refs--;
+      rc = 0;
+      break;
+    }
+    rc =fs_write(&new_file, crec_buf, sizeof crec_buf);
+    if (rc < 0) {
+      LOG_ERR("FAIL: write updated noise key rec to %s: %d", new_path, rc);
+      break;
+    }
+    if (rc != sizeof crec_buf) {
+      LOG_ERR("E error short write, only %d instead of requested %d bytes read from %s", rc, sizeof crec_buf, new_path);
+      rc =  -ENODATA;
+      break;
+    }
+  }
+
+  int ret = fs_close(&file);
+  if (ret < 0) {
+    LOG_ERR("FAIL: close %s: %d", path, ret);
+    return ret;
+  }
+  ret = fs_close(&new_file);
+  if (ret < 0) {
+    LOG_ERR("FAIL: close %s: %d", new_path, ret);
+    return ret;
+  }
+  rc = fs_rename(path, new_path);
+  if(rc!=0) LOG_ERR("failed to replace old authorized_keys with new updated version: %d", rc);
+
+  return rc;
+}
+
 static int modauth(const CFG *cfg, const ModAuthReq *req) {
   int rc, ret;
   uint8_t pk[crypto_sign_PUBLICKEYBYTES];
@@ -1329,7 +1503,7 @@ static int modauth(const CFG *cfg, const ModAuthReq *req) {
     return ret;
   }
 
-  if(req->readonly) {
+  if(req->userop == USER_LIST) {
     LOG_INF("%s list auth success", hexid);
     return 0;
   }
@@ -1355,6 +1529,27 @@ static int modauth(const CFG *cfg, const ModAuthReq *req) {
   if(ret < 0) {
     LOG_ERR("E failed to store auth");
     return ret;
+  }
+
+  uint8_t *noisekey=NULL;
+  ret = read(0, &noisekey);
+  if(ret < 0) {
+    LOG_ERR("failed to read new noisekey: %d", ret);
+    free(authbuf2);
+    return ret;
+  }
+
+  if(req->userop == USER_ADD) {
+    ret = add_auth_client(noisekey+2);
+  } else if(req->userop == USER_DEL) {
+    ret = del_auth_client(noisekey+2);
+  }
+  if (ret!=0) {
+    if(authbuf2!=NULL) {
+      free(authbuf2);
+      authbuf2=NULL;
+    }
+    zfail();
   }
 
   LOG_INF("%s mod auth success", hexid);
