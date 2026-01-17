@@ -71,8 +71,8 @@ struct fs_mount_t *mountpoint =
   &lfs_storage_mnt;
 #endif
 
-#if DT_NODE_EXISTS(UART_DEVICE_NODE)
-static const struct device *const uart_dev = DEVICE_DT_GET(UART_DEVICE_NODE);
+#if !DT_NODE_EXISTS(UART_DEVICE_NODE) && DT_NODE_EXISTS(USB_UART_DEVICE_NODE)
+//static const struct device *const uart_dev = DEVICE_DT_GET(UART_DEVICE_NODE);
 
 //#define UART_MSG_SIZE 37
 ///* queue to store up to 10 messages (aligned to 4-byte boundary) */
@@ -81,10 +81,10 @@ static const struct device *const uart_dev = DEVICE_DT_GET(UART_DEVICE_NODE);
 ///* receive buffer used in UART ISR callback */
 //static char uart_rx_buf[UART_MSG_SIZE];
 //static int uart_rx_buf_pos;
-#else
-#  if DT_NODE_EXISTS(USB_UART_DEVICE_NODE)
+//#else
+//#  if
 static const struct device *const uart_dev = DEVICE_DT_GET(USB_UART_DEVICE_NODE);
-#  endif
+//#  endif
 #endif
 
 typedef enum {
