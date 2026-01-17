@@ -1403,29 +1403,6 @@ out:
   return (rc < 0 ? rc : 0);
 }
 
-static int initkey(const char *path, const size_t key_len, uint8_t *key) {
-  struct fs_dirent entry;
-  if(0 == fs_stat(path, &entry)) {
-    LOG_WRN("W %s does exist", path);
-    if(entry.size!=key_len) {
-      LOG_ERR("%s has invalid size", path);
-      fs_unlink(path);
-    } else {
-      return -EEXIST;
-    }
-  }
-
-  const struct device *rng_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_entropy));
-  if (!device_is_ready(rng_dev)) {
-    LOG_ERR("error: random device not ready");
-    return -EAGAIN;
-  }
-  entropy_get_entropy(rng_dev, (char *)key, key_len);
-  crypto_generichash(key,key_len, key,key_len, NULL,0);
-
-  return save(path,key_len,key,0);
-}
-
 int init_is_incomplete(void) {
   struct fs_dirent dirent;
   uint8_t res=0;
@@ -1451,44 +1428,6 @@ int init_is_incomplete(void) {
     }
   }
   return res;
-}
-
-static int initcfg(CFG *cfg) {
-  int rc;
-  rc = initkey("/lfs/cfg/noise_key", 32, cfg->noise_sk);
-  if(rc!=0) {
-    LOG_ERR("E failed to init noise_sk");
-    return rc;
-  }
-
-  uint8_t ltsig_seed[crypto_sign_SEEDBYTES];
-  rc = initkey("/lfs/cfg/ltsig_seed", crypto_sign_SEEDBYTES, ltsig_seed);
-  if(rc!=0) {
-    LOG_ERR("E failed to init ltsig_seed");
-    return rc;
-  }
-  uint8_t dummy[crypto_sign_PUBLICKEYBYTES];
-  if(0!=crypto_sign_seed_keypair(dummy, cfg->ltsig_sk, ltsig_seed)) {
-    LOG_ERR("E failed to derive ltsig keypair");
-    return -1;
-  }
-  sodium_memzero(ltsig_seed,sizeof ltsig_seed);
-
-  uint8_t authkey_pk[64];
-  crypto_sign_ed25519_sk_to_pk(authkey_pk, cfg->ltsig_sk);
-  Noise_XK_dh_secret_to_public(authkey_pk+32, cfg->noise_sk);
-  rc = save("/lfs/cfg/authorized_keys", 64, authkey_pk, FS_O_APPEND);
-  if(0!=rc) {
-    LOG_ERR("failed to save authorized keys of device: %d. aborting.", rc);
-    return rc;
-  }
-
-  rc = initkey("/lfs/cfg/record_salt", 32, cfg->rec_salt);
-  if(rc!=0) {
-    LOG_ERR("E failed to init record salt");
-    return rc;
-  }
-  return 0;
 }
 
 void printb64(const char* prefix, const size_t buf_len, const uint8_t *buf) {
@@ -1530,11 +1469,8 @@ out:
 static int loadcfg(const char* path, const size_t buf_len, uint8_t *buf) {
   int rc;
   rc=load(path, buf_len, buf);
-  if(rc==0) return 0;
-  if(rc!=-ENOENT) return -1;
-  rc = initkey(path, buf_len, buf);
   if(rc!=0) {
-    LOG_ERR("E failed to init %s", path);
+    LOG_ERR("E failed to load %s", path);
     return rc;
   }
   return 0;
@@ -1591,27 +1527,21 @@ static int boot(CFG *cfg) {
 
   struct fs_dirent entry;
   int rc = fs_stat("/lfs/cfg", &entry);
-  if(-ENOENT == rc) {
-    LOG_WRN("W /lfs/cfg doesn't exist, initializing");
+  if(-ENOENT == rc || 0!=init_is_incomplete()) {
+    if(-ENOENT == rc) LOG_WRN("W /lfs/cfg doesn't exist, initializing");
 
     printk("no configuration found. waiting for client initialization\n");
     while(0!=init_is_incomplete()) {
       k_sleep(K_MSEC(10));
     }
+  } else if(rc!=0) {
+    LOG_ERR("failed to stat /lfs/cfg: %d. rebooting.", rc);
+    log_flush();
+    sys_reboot(SYS_REBOOT_COLD);
+  }
 
-    if(0!=initcfg(cfg)) {
-      LOG_ERR("failed to initialize config. halting.");
-      log_flush();
-      sys_reboot(SYS_REBOOT_COLD);
-    }
-  } else if(rc==0) {
-    if(getcfg(cfg)<0) {
-      LOG_ERR("failed to load config. please fix configuration. halting.");
-      log_flush();
-      sys_reboot(SYS_REBOOT_COLD);
-    }
-  } else {
-    LOG_ERR("failed to stat /lfs/cfg: %d. halting.", rc);
+  if(getcfg(cfg)<0) {
+    LOG_ERR("failed to load config. please fix configuration. halting.");
     log_flush();
     sys_reboot(SYS_REBOOT_COLD);
   }
