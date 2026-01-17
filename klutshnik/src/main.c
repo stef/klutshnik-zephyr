@@ -158,6 +158,9 @@ typedef struct {
 } __attribute__((__packed__)) AuthKeys;
 
 const InitFiles init_files[] = {
+  {"/lfs/cfg/noise_key", 32},
+  {"/lfs/cfg/ltsig_seed", crypto_sign_SEEDBYTES},
+  {"/lfs/cfg/record_salt", 32},
   {"/lfs/cfg/owner_pk", 32},
   {"/lfs/cfg/authorized_clients", 32},
   {"/lfs/cfg/authorized_keys", 196}};
@@ -1406,7 +1409,7 @@ out:
 int init_is_incomplete(void) {
   struct fs_dirent dirent;
   uint8_t res=0;
-  for(int i=0;i<3;i++) {
+  for(int i=0;i<6;i++) {
     int rc = fs_stat(init_files[i].path, &dirent);
     if (rc < 0) {
       res|=(1 << (i*2));
@@ -1417,7 +1420,7 @@ int init_is_incomplete(void) {
         continue;
       }
     }
-    if(i<2) {
+    if(i<4) {
       if(dirent.size != init_files[i].min) {
         res|=(3 << (i*2));
         continue;
