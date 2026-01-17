@@ -285,6 +285,7 @@ static int setup_noise_connection(CFG *cfg) {
   if(!session) {
      LOG_ERR("Failed to create noise session");
      Noise_XK_device_free(dev);
+     dev=NULL;
      return -1;
   }
 
@@ -303,16 +304,18 @@ static int setup_noise_connection(CFG *cfg) {
   if(kstate!=CONNECTED) {
     Noise_XK_session_free(session);
     Noise_XK_device_free(dev);
+    session=NULL;
+    dev=NULL;
     return -ENOTCONN;
   }
 
   inbuf_end=0;
 
-  Noise_XK_encap_message_t *encap_msg;
+  Noise_XK_encap_message_t *encap_msg=NULL;
   Noise_XK_rcode res;
-  uint8_t *cipher_msg;
+  uint8_t *cipher_msg=NULL;
   uint32_t cipher_msg_len;
-  uint8_t *plain_msg;
+  uint8_t *plain_msg=NULL;
   uint32_t plain_msg_len;
 
   res = Noise_XK_session_read(&encap_msg, session, 48, inbuf);
@@ -321,33 +324,55 @@ static int setup_noise_connection(CFG *cfg) {
     LOG_HEXDUMP_ERR(inbuf, 48, "noise handshake init msg");
     Noise_XK_session_free(session);
     Noise_XK_device_free(dev);
+    session=NULL;
+    dev=NULL;
     return -1;
   }
   if(!Noise_XK_unpack_message_with_auth_level(&plain_msg_len, &plain_msg, NOISE_XK_AUTH_ZERO, encap_msg)) {
     LOG_ERR("failed to unpack noise handshake init msg");
     Noise_XK_session_free(session);
     Noise_XK_device_free(dev);
+    session=NULL;
+    dev=NULL;
     Noise_XK_encap_message_p_free(encap_msg);
     return -1;
   }
   Noise_XK_encap_message_p_free(encap_msg);
-  if (plain_msg_len > 0) free(plain_msg);
+  if (plain_msg_len > 0) {
+    LOG_ERR("plain_msg_len(%d) is > 0 in initial xk handshake packet, this should not be possible", plain_msg_len);
+    log_flush();
+    k_sleep(K_MSEC(50));
+    sys_reboot(SYS_REBOOT_COLD);
+  }
 
   encap_msg = Noise_XK_pack_message_with_conf_level(NOISE_XK_CONF_ZERO, 0, NULL);
+  if(encap_msg==NULL) {
+    LOG_ERR("encap_msg is NULL in xk handshake response packet, this should not be possible");
+    log_flush();
+    k_sleep(K_MSEC(50));
+    sys_reboot(SYS_REBOOT_COLD);
+  }
   res = Noise_XK_session_write(encap_msg, session, &cipher_msg_len, &cipher_msg);
   Noise_XK_encap_message_p_free(encap_msg);
   if(!Noise_XK_rcode_is_success(res)) {
     LOG_ERR("failed to create noise handshake response");
     Noise_XK_session_free(session);
     Noise_XK_device_free(dev);
+    session=NULL;
+    dev=NULL;
     return -1;
   }
 
   int err= send_plaintext(cipher_msg, cipher_msg_len);
-  if (cipher_msg_len > 0) free(cipher_msg);
+  if (cipher_msg_len > 0) {
+    free(cipher_msg);
+    cipher_msg=NULL;
+  }
   if(err == -ENOTCONN) {
     Noise_XK_session_free(session);
     Noise_XK_device_free(dev);
+    session=NULL;
+    dev=NULL;
     return err;
   } else if (err < 0) {
     LOG_ERR("error sending handshake: %d", err);
@@ -369,17 +394,26 @@ static int setup_noise_connection(CFG *cfg) {
     LOG_ERR("failed to noise read the handshake final msg");
     Noise_XK_session_free(session);
     Noise_XK_device_free(dev);
+    session=NULL;
+    dev=NULL;
     return -1;
   }
   if(!Noise_XK_unpack_message_with_auth_level(&plain_msg_len, &plain_msg, NOISE_XK_AUTH_KNOWN_SENDER_NO_KCI, encap_msg)) {
     LOG_ERR("failed to unpack noise handshake final msg");
     Noise_XK_session_free(session);
     Noise_XK_device_free(dev);
+    session=NULL;
+    dev=NULL;
     Noise_XK_encap_message_p_free(encap_msg);
     return -1;
   }
   Noise_XK_encap_message_p_free(encap_msg);
-  if (plain_msg_len > 0) free(plain_msg);
+  if (plain_msg_len > 0) {
+    LOG_ERR("plain_msg_len(%d) is > 0 in final xk handshake packet, this should not be possible", plain_msg_len);
+    log_flush();
+    k_sleep(K_MSEC(50));
+    sys_reboot(SYS_REBOOT_COLD);
+  }
 
   LOG_INF("Noise channel setup complete");
   return 0;
@@ -609,7 +643,7 @@ static int auth(const CFG *cfg, const KlutshnikOp op, uint8_t pk[crypto_sign_PUB
   default: { return -EINVAL; }
   }
 
-  uint8_t *sig;
+  uint8_t *sig=NULL;
   ret = read(crypto_sign_BYTES+2,&sig);
   if(ret < 0) {
     LOG_ERR("failed to read auth sig: %d", ret);
@@ -619,6 +653,10 @@ static int auth(const CFG *cfg, const KlutshnikOp op, uint8_t pk[crypto_sign_PUB
   uint8_t owner[crypto_sign_PUBLICKEYBYTES];
   ret = getfield(cfg, reqbuf+2, "owner", sizeof(owner), owner);
   if(ret < 0) {
+    if(sig!=NULL) {
+      free(sig);
+      sig=NULL;
+    }
     LOG_ERR("E failed to load owners pubkey: %d", ret);
     zfail();
   }
@@ -633,7 +671,15 @@ static int auth(const CFG *cfg, const KlutshnikOp op, uint8_t pk[crypto_sign_PUB
 
   if(0!=crypto_sign_verify_detached(sig+2, _signed, sizeof(_signed), pk)) {
     LOG_ERR("E auth data not signed by owner");
+    if(sig!=NULL) {
+      free(sig);
+      sig=NULL;
+    }
     zfail();
+  }
+  if(sig!=NULL) {
+    free(sig);
+    sig=NULL;
   }
 
   uint8_t hex[crypto_sign_PUBLICKEYBYTES*2+1];
@@ -821,7 +867,10 @@ int toprf_update(const CFG *cfg, const UpdateReq *req) {
     ret = toprf_update_peer_next(&ctx,
                                  peer_in+2, peer_in_size,
                                  peers_out, peer_out_size);
-    if(peer_in!=NULL) free(peer_in);
+    if(peer_in!=NULL) {
+      free(peer_in);
+      peer_in=NULL;
+    }
     if(0!=ret) {
       // clean up peers
       LOG_ERR("peer_next, step %d returned %d", curstep, ret);
@@ -909,6 +958,10 @@ static int load_authkeys(Keyloader_CB_Arg *cb_arg) {
   rc = fs_open(&file, fname, FS_O_READ);
   if (rc < 0) {
     LOG_ERR("FAIL: open %s: %d", fname, rc);
+    if(cb_arg->auth_keys!=NULL) {
+      free(cb_arg->auth_keys);
+      cb_arg->auth_keys=NULL;
+    }
     return rc;
   }
 
@@ -916,10 +969,18 @@ static int load_authkeys(Keyloader_CB_Arg *cb_arg) {
     rc = fs_read(&file, cb_arg->auth_keys[i].ltsig, 64);
     if (rc < 0) {
       LOG_ERR("FAIL: read %s: %d", fname, rc);
+      if(cb_arg->auth_keys!=NULL) {
+        free(cb_arg->auth_keys);
+        cb_arg->auth_keys=NULL;
+      }
       goto out;
     }
     if(rc!=64) {
       LOG_ERR("FAIL: short read only %dB instead of 64B", rc);
+      if(cb_arg->auth_keys!=NULL) {
+        free(cb_arg->auth_keys);
+        cb_arg->auth_keys=NULL;
+      }
       return -EINVAL;
     }
     crypto_generichash(cb_arg->auth_keys[i].keyid,32,cb_arg->auth_keys[i].ltsig,crypto_sign_PUBLICKEYBYTES,NULL,0);
@@ -929,6 +990,11 @@ out:
   int ret = fs_close(&file);
   if (ret < 0) {
     LOG_ERR("FAIL: close %s: %d", fname, ret);
+    if(cb_arg->auth_keys!=NULL) {
+      free(cb_arg->auth_keys);
+      cb_arg->auth_keys=NULL;
+    }
+    log_flush();
     return ret;
   }
 
@@ -1002,7 +1068,7 @@ static int stp_dkg(const CFG *cfg, const CreateReq *req) {
   memset(peer_last_ts, 0, sizeof peer_last_ts);
   STP_DKG_Cheater peer_cheaters[t*t - 1];
   memset(peer_cheaters,0,sizeof(peer_cheaters));
-  Keyloader_CB_Arg keyloader_args;
+  Keyloader_CB_Arg keyloader_args={0};
   if(0!=load_authkeys(&keyloader_args)) {
     LOG_ERR("failed to load authorized_keys. aborting.");
     return -1;
@@ -1063,9 +1129,18 @@ static int stp_dkg(const CFG *cfg, const CreateReq *req) {
       ret = send_pkt(peers_out_buf, peer_out_size);
       if(ret < 0) {
         LOG_ERR("failed to send message for step %d", curstep);
+        if(keyloader_args.auth_keys!=NULL) {
+          free(keyloader_args.auth_keys);
+          keyloader_args.auth_keys=NULL;
+        }
+        log_flush();
         return ret;
       }
     }
+  }
+  if(keyloader_args.auth_keys!=NULL) {
+    free(keyloader_args.auth_keys);
+    keyloader_args.auth_keys=NULL;
   }
 
   uint8_t pki[TOPRF_Share_BYTES];
@@ -1135,12 +1210,19 @@ static int stp_dkg(const CFG *cfg, const CreateReq *req) {
     LOG_HEXDUMP_ERR(stp_ltpk, 32, "stp_ltpk");
     LOG_HEXDUMP_ERR(auth_buf, ret, "auth_buf");
     LOG_ERR("length of signed data: %d", ret - 2 - crypto_sign_BYTES);
+    if(auth_buf!=NULL) {
+      free(auth_buf);
+      auth_buf=NULL;
+    }
     zfail();
   }
 
   LOG_INF("storing auth_buf");
   ret = store(cfg, req->id, "auth", ret - 2, auth_buf + 2, 0);
-  free(auth_buf);
+  if(auth_buf!=NULL) {
+    free(auth_buf);
+    auth_buf=NULL;
+  }
   if(ret < 0) {
     LOG_ERR("E failed to store auth");
     return ret;
@@ -1252,7 +1334,7 @@ static int modauth(const CFG *cfg, const ModAuthReq *req) {
     return 0;
   }
 
-  uint8_t *authbuf2;
+  uint8_t *authbuf2=NULL;
   ret = read(0, &authbuf2);
   if(ret < 0) {
     LOG_ERR("failed to read new authbuf: %d", ret);
@@ -1261,11 +1343,15 @@ static int modauth(const CFG *cfg, const ModAuthReq *req) {
 
   if(0!=crypto_sign_verify_detached(authbuf2 + 2, authbuf2 + 2 + crypto_sign_BYTES, ret - 2 - crypto_sign_BYTES, pk)) {
     LOG_ERR("E new auth data not signed by owner");
+    if(authbuf2!=NULL) {
+      free(authbuf2);
+      authbuf2=NULL;
+    }
     zfail();
   }
 
   ret = store(cfg, req->id, "auth", ret - 2, authbuf2 + 2, 0);
-  free(authbuf2);
+  if(authbuf2!=NULL) free(authbuf2);
   if(ret < 0) {
     LOG_ERR("E failed to store auth");
     return ret;
@@ -1591,16 +1677,23 @@ int main(void) {
 
     while(1) {
       if(kstate==DISCONNECTED) break;
-      uint8_t *pkt;
+      uint8_t *pkt=NULL;
       int ret = read(0, &pkt);
       if(ret < 0) {
         if(ret==-ETIMEDOUT) {
           k_sleep(K_MSEC(10));
           continue;
         }
-        if(ret==-ENOTCONN) break;
+        if(ret==-ENOTCONN) {
+          if(pkt!=NULL) {
+            free(pkt);
+            pkt=NULL;
+          }
+          break;
+        }
         LOG_ERR("error reading initial request packet: %d", ret);
-        //sys_reboot(SYS_REBOOT_COLD);
+        log_flush();
+        sys_reboot(SYS_REBOOT_COLD);
       }
       switch(pkt[0]) {
       case OP_CREATE: {
@@ -1662,10 +1755,30 @@ int main(void) {
         //sys_reboot(SYS_REBOOT_COLD);
       }
       }
-      free(pkt);
+      if(pkt!=NULL) {
+        free(pkt);
+        pkt=NULL;
+      }
       inbuf_start=0;
       inbuf_end=0;
       kstate=DISCONNECTED;
+      //#ifdef CONFIG_KLUTSHNIK_BLE
+      //      ret = ble_disconnect();
+      //      if(ret<0) {
+      //        LOG_ERR("failed to disconnect BLE connection: %d, resetting BLE", ret);
+      //        reset_ble();
+      //      }
+      //#endif
+      LOG_INF("request done");
+      log_flush();
+    }
+    if(session!=NULL) {
+      Noise_XK_session_free(session);
+      session=NULL;
+    }
+    if(dev!=NULL) {
+      Noise_XK_device_free(dev);
+      dev=NULL;
     }
   }
 
