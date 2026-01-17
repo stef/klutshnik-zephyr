@@ -48,8 +48,9 @@ static void received(struct bt_conn *conn, const void *data, uint16_t len, void 
      return;
    }
    if(len + inbuf_end<sizeof(inbuf)) {
-      memcpy(inbuf+inbuf_end, data, len);
-      inbuf_end+=len;
+     //LOG_INF("received: memcpy(%p, %p, %d)", (void*) (inbuf+inbuf_end), (void*) data, len);
+     memcpy(inbuf+inbuf_end, data, len);
+     inbuf_end+=len;
    } else{
      LOG_ERR("inbuf full, dropping %d bytes", len);
    }
@@ -175,7 +176,6 @@ int send_pkt(const uint8_t *msg, const size_t msg_len) {
 }
 
 int read(size_t size, uint8_t **buf) {
-  //LOG_DBG("read: %d", size);
   int64_t timeout = 3;
   int64_t start = k_uptime_get();
   size_t plen = 0;
@@ -204,8 +204,6 @@ int read(size_t size, uint8_t **buf) {
     k_sleep(K_MSEC(10));
   }
 
-  //LOG_DBG("read: done");
-
   Noise_XK_encap_message_t *encap_msg;
   Noise_XK_rcode res;
   uint32_t plain_msg_len;
@@ -232,7 +230,6 @@ int read(size_t size, uint8_t **buf) {
     inbuf_end=0;
   } else if(inbuf_start > inbuf_end) return -EINVAL;
 
-  //LOG_DBG("decrypted");
   return plain_msg_len;
 }
 
@@ -294,7 +291,6 @@ int ble_init(CFG *cfg) {
   start_adv();
 
   char addr_s[BT_ADDR_LE_STR_LEN];
-  bt_addr_le_t addr = {0};
 
   struct bt_le_oob oob;
   err = bt_le_oob_get_local(BT_ID_DEFAULT, &oob);
@@ -303,6 +299,7 @@ int ble_init(CFG *cfg) {
     return err;
   }
   bt_addr_le_to_str(&oob.addr, addr_s, sizeof(addr_s));
+  //bt_addr_le_t addr = {0};
   //size_t count = 1;
   //bt_id_get(&addr, &count);
   //bt_addr_le_to_str(&addr, addr_s, sizeof(addr_s));
