@@ -1,21 +1,25 @@
-#!/bin/sh -x
+#!/bin/sh
 
 ORACLE=${ORACLE:-../../../../../server/zig-out/bin/klutshnikd}
 PIDS=""
 
 cleanup() {
- echo killing klutshnikds ${PIDS}
- kill ${PIDS}
+ echo cleanup killing klutshnikds "${PIDS}"
+ kill "${PIDS}"
  exit
 }
 
-function start_server() {
+start_server() {
    printf "starting klutshnikd %s\n" "$1"
-   cd "$1"
+   cd "$1" || exit 1
+   if [ "$1" = "$ORACLE_STRACE"  ]; then
+      strace -I1 --kill-on-exit -fo strace.log "$ORACLE" >log 2>&1 &
+   else
    "$ORACLE" >log 2>&1 &
+   fi
    PIDS="$PIDS $!"
+   cd ..
    sleep 0.1
-   cd - >/dev/null
 }
 
 start_server 0
@@ -24,6 +28,9 @@ start_server 2
 start_server 3
 start_server 4
 
-trap "cleanup" INT
-tail -f 1/log
-#while true; do sleep 1 ;done
+trap "cleanup" INT TERM QUIT
+if [ -n "$ORACLE_TAIL" ]; then
+   tail -n 50 -f "$ORACLE_TAIL"/log
+else
+   while true; do sleep 1 ;done
+fi
