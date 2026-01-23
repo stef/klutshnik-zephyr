@@ -27,7 +27,7 @@ If you target a teensy you also need:
  - and the `arm-none-eabi` cross-compiler toolchain.
 
 For the Raspberry Pico2:
- - you currently need this [patch](https://github.com/zephyrproject-rtos/zephyr/commit/d42a9052d8940c5c5d50dc9964c7397cd1846f80.patch) to get the RNG working, apply this in the zephyr directory
+ - ~you currently need this [patch](https://github.com/zephyrproject-rtos/zephyr/commit/d42a9052d8940c5c5d50dc9964c7397cd1846f80.patch) to get the RNG working, apply this in the zephyr directory~ not anymore since january 2026.
  - you also need the `arm-none-eabi` cross-compiler toolchain.
 
 ### Initializing your zephyr workspace
