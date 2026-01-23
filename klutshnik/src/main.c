@@ -181,7 +181,7 @@ static uint64_t ref_time;
 
 uint64_t ztime(void) {
   uint64_t now = k_uptime_seconds();
-  return htonll(now + ref_time);
+  return net_htonll(now + ref_time);
 }
 
 static void zfail(void) {
@@ -784,7 +784,7 @@ int toprf_update(const CFG *cfg, const UpdateReq *req) {
   }
 
   uint64_t now = k_uptime_seconds();
-  ref_time = ntohll(((DKG_Message*) req->msg0)->ts) - now;
+  ref_time = net_ntohll(((DKG_Message*) req->msg0)->ts) - now;
 
   LOG_INF("[T] allocating memory for peers state..");
   // now that the peer(s) know the value of N, we can allocate buffers
@@ -924,7 +924,7 @@ int toprf_update(const CFG *cfg, const UpdateReq *req) {
     return ret;
   }
 
-  response.epoch = htonl(epoch);
+  response.epoch = net_htonl(epoch);
 
   LOG_INF("sending epoch+pki");
   ret = send((uint8_t*) &response, sizeof(response));
@@ -1040,7 +1040,7 @@ static int stp_dkg(const CFG *cfg, const CreateReq *req) {
   }
 
   uint64_t now = k_uptime_seconds();
-  ref_time = ntohll(((DKG_Message*) req->msg0)->ts) - now;
+  ref_time = net_ntohll(((DKG_Message*) req->msg0)->ts) - now;
 
   const uint8_t n=ctx.n;
   const uint8_t t=ctx.t;
@@ -1582,7 +1582,7 @@ static int refresh(const CFG *cfg, const RefreshReq *req) {
     LOG_ERR("E failed to load epoch: %d", ret);
     return ret;
   }
-  response.epoch=htonl(response.epoch);
+  response.epoch=net_htonl(response.epoch);
 
   response.pki.index=share[0].index;
   if(0!=crypto_scalarmult_ristretto255_base(response.pki.value, share[0].value)) zfail();
